@@ -9,6 +9,8 @@
 
 A Cloud CLI Toolkit for the terminal — one tool, one command, no setup.
 
+*by Chris Karabinis*
+
 Built to replace the habit of downloading and juggling multiple different tools for everyday reconnaissance tasks. Everything you need is in a single binary: DNS, subdomains, certificates, WHOIS, and port scanning — all with a consistent interface.
 
 Also a personal project to understand how security tools are built from the ground up, as part of growing as a SysAdmin and DevOps engineer.
@@ -393,3 +395,7 @@ sudo sek uninstall
 ## License
 
 MIT
+
+---
+
+Built by [Chris Karabinis](https://github.com/chriskarabinis)
