@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -125,9 +126,14 @@ var tfCmd = &cobra.Command{
 		WriteLineColored(yellow+header+reset, header)
 
 		client := &http.Client{
-			Timeout: 12 * time.Second,
+			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: false},
+				TLSClientConfig:     &tls.Config{InsecureSkipVerify: false},
+				DisableKeepAlives:   true,
+				TLSHandshakeTimeout: 5 * time.Second,
+				DialContext: (&net.Dialer{
+					Timeout: 5 * time.Second,
+				}).DialContext,
 			},
 		}
 
