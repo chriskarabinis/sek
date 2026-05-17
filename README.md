@@ -58,6 +58,22 @@ sudo mv sek /usr/local/bin/
 
 ---
 
+## Shell Autocomplete
+
+Enable tab completion for all `sek` commands and flags.
+
+**zsh**
+```bash
+echo 'source <(sek completion zsh)' >> ~/.zshrc && source ~/.zshrc
+```
+
+**bash**
+```bash
+echo 'source <(sek completion bash)' >> ~/.bashrc && source ~/.bashrc
+```
+
+---
+
 ## Global Flags
 
 Available on all commands:
