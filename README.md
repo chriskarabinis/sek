@@ -7,7 +7,7 @@
 |___/|___||_|\_\
 ```
 
-A security toolkit for the terminal — one tool, one command, no setup.
+A Cloud CLI Toolkit for the terminal — one tool, one command, no setup.
 
 Built to replace the habit of downloading and juggling multiple different tools for everyday reconnaissance tasks. Everything you need is in a single binary: DNS, subdomains, certificates, WHOIS, and port scanning — all with a consistent interface.
 
