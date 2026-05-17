@@ -24,6 +24,16 @@ Available on all commands:
 
 ## Installation
 
+### Install script (macOS & Linux) — recommended
+```bash
+curl -fsSL https://raw.githubusercontent.com/chriskarabinis/sek/main/install.sh | bash
+```
+
+### Homebrew (macOS)
+```bash
+brew install chriskarabinis/sek/sek
+```
+
 ### Using Go
 ```bash
 go install github.com/chriskarabinis/sek@latest
