@@ -47,6 +47,7 @@ sudo mv sek /usr/local/bin/
 | `sek dns` | DNS record lookup + platform detection |
 | `sek cert` | SSL/TLS certificate info — expiry, issuer, SANs, TLS version |
 | `sek whois` | WHOIS domain lookup — registrar, dates, nameservers |
+| `sek scan` | Port scanner — open ports, services, banners, firewall detection |
 | `sek version` | Show current version |
 
 ---
@@ -314,6 +315,76 @@ sek whois -d example.com -r
 ```
 
 > Note: Some TLDs (e.g. `.gr`) do not operate a public WHOIS server on port 43. For those, `sek whois` displays TLD registry info from IANA and shows a link to the web-based lookup (e.g. `https://grweb.ics.forth.gr/` for `.gr`).
+
+---
+
+---
+
+## sek scan
+
+Scan a host for open ports, identify running services, and detect firewall filtering.
+
+Uses TCP connect scanning — no root required.
+
+### Usage
+
+```bash
+sek scan -d <domain or IP> [flags]
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `-d` | Target domain or IP (required) |
+| `-p` | Ports to scan: comma-separated or range (e.g. `80,443` or `1-1000`). Default: top 84 common ports |
+| `-t` | Connection timeout in milliseconds (default: 2000) |
+| `--all` | Scan all 65535 ports |
+
+### Examples
+
+```bash
+# Default scan (top 84 common ports)
+sek scan -d example.com
+
+# Specific ports
+sek scan -d example.com -p 22,80,443,3306
+
+# Port range
+sek scan -d example.com -p 1-1000
+
+# Full scan
+sek scan -d example.com --all
+
+# Save results to file
+sek scan -d example.com -o results.txt
+```
+
+### Output
+
+```
+[*] Port scan for: example.com (93.184.216.34)
+
+[*] Scanning 84 ports...
+
+  PORT         STATE      SERVICE              VERSION
+  ------------------------------------------------------------------
+  22/tcp       open       SSH                  OpenSSH_8.4p1 Ubuntu
+  80/tcp       open       HTTP                 nginx/1.18.0
+  443/tcp      open       HTTPS                nginx/1.18.0
+
+  PORT         STATE      SERVICE
+  ------------------------------------------------------------------
+  3306/tcp     filtered   MySQL
+  5432/tcp     filtered   PostgreSQL
+
+[*] Done. 3 open  |  2 filtered  |  79 closed
+```
+
+Port states:
+- **open** — port is accepting connections (service is running)
+- **filtered** — firewall is dropping packets (port is protected)
+- **closed** — host actively refused the connection (no service, no firewall)
 
 ---
 
