@@ -100,6 +100,7 @@ Available commands:
   sek cert     — SSL/TLS certificate info
   sek whois    — WHOIS domain lookup
   sek scan     — Port scanner
+  sek headers  — HTTP security headers checker
   sek update     — Update to the latest version
   sek uninstall  — Remove sek from your system
   sek version    — Show current version`,

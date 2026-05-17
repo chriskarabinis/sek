@@ -53,6 +53,7 @@ sudo mv sek /usr/local/bin/
 | [`sek cert`](#sek-cert) | SSL/TLS certificate info — expiry, issuer, SANs, TLS version |
 | [`sek whois`](#sek-whois) | WHOIS domain lookup — registrar, dates, nameservers |
 | [`sek scan`](#sek-scan) | Port scanner — open ports, services, banners, firewall detection |
+| [`sek headers`](#sek-headers) | HTTP security headers checker |
 | [`sek update`](#sek-update) | Update sek to the latest version |
 | [`sek uninstall`](#sek-uninstall) | Remove sek from your system |
 
@@ -366,6 +367,61 @@ Port states:
 - **open** — port is accepting connections (service is running)
 - **filtered** — firewall is dropping packets (port is protected, use `--filter` to show)
 - **closed** — host actively refused the connection (no service, no firewall)
+
+---
+
+## sek headers
+
+Check HTTP response headers for security best practices.
+
+### Usage
+
+```bash
+sek headers -d <domain> [flags]
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `-d` | Target domain (required) |
+| `--http` | Use HTTP instead of HTTPS |
+| `-p` | Custom port |
+| `--all` | Show all response headers |
+
+### Examples
+
+```bash
+sek headers -d example.com
+sek headers -d example.com --http
+sek headers -d example.com --all
+```
+
+### Output
+
+```
+[*] HTTP Security Headers for: example.com
+
+[*] Response
+  Status            200 OK
+  Server            nginx/1.18.0
+  Content-Type      text/html; charset=UTF-8
+
+[*] Security Headers
+  HEADER                             STATE     VALUE
+  --------------------------------------------------------------------------------
+  Strict-Transport-Security          PRESENT   max-age=31536000
+  Content-Security-Policy            MISSING   -
+  X-Frame-Options                    PRESENT   SAMEORIGIN
+  X-Content-Type-Options             PRESENT   nosniff
+  Referrer-Policy                    PRESENT   strict-origin-when-cross-origin
+  Permissions-Policy                 MISSING   -
+  X-XSS-Protection                   PRESENT   1; mode=block
+
+[*] Score: 5/7 — Good
+```
+
+Score labels: `Excellent` (7/7) · `Good` (≥5) · `Fair` (≥3) · `Poor` (<3)
 
 ---
 
