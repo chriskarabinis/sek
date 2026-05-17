@@ -15,6 +15,11 @@ import (
 var whoisDomain string
 var whoisRaw    bool
 
+// tldWebRegistries maps TLDs that have no public port-43 WHOIS to their web lookup URLs
+var tldWebRegistries = map[string]string{
+	"gr": "https://grweb.ics.forth.gr/",
+}
+
 // whoisServers maps common TLDs to their WHOIS servers
 var whoisServers = map[string]string{
 	"com":  "whois.verisign-grs.com",
@@ -178,10 +183,44 @@ var whoisCmd = &cobra.Command{
 
 		// Check if the response is about the queried domain or just the TLD
 		if !strings.Contains(strings.ToLower(raw), strings.ToLower(whoisDomain)) {
-			WriteLine(fmt.Sprintf("[!] No domain-level WHOIS data found for %s\n", whoisDomain))
-			WriteLine(fmt.Sprintf("    The .%s TLD may not have a public WHOIS server on port 43.", tld))
-			WriteLine(fmt.Sprintf("    Try checking the registry website directly.\n"))
-			os.Exit(1)
+			WriteLine(fmt.Sprintf("[!] No domain-level WHOIS available for .%s — the registry has no public port-43 server.\n", tld))
+
+			if webURL, ok := tldWebRegistries[tld]; ok {
+				plain := fmt.Sprintf("[*] Domain lookup: %s\n", webURL)
+				WriteLineColored(yellow+plain+reset, plain)
+			}
+
+			// Show the TLD-level registry info that IANA did return
+			tldLines := strings.Split(raw, "\n")
+			tldFields := []struct {
+				label string
+				keys  []string
+			}{
+				{"Organisation", []string{"organisation", "org"}},
+				{"Status", []string{"status"}},
+				{"Created", []string{"created"}},
+				{"Changed", []string{"changed"}},
+			}
+			WriteLine("[*] TLD Registry Info (from IANA)")
+			for _, f := range tldFields {
+				val := extractField(tldLines, f.keys...)
+				if val != "N/A" {
+					plain := fmt.Sprintf("  %-14s  %s", f.label, val)
+					WriteLineColored(yellow+plain+reset, plain)
+				}
+			}
+			WriteLine("")
+
+			nservers := extractAll(tldLines, "nserver")
+			if len(nservers) > 0 {
+				WriteLine("[*] TLD Name Servers")
+				for _, ns := range nservers {
+					plain := fmt.Sprintf("  %s", strings.ToLower(ns))
+					WriteLineColored(yellow+plain+reset, plain)
+				}
+				WriteLine("")
+			}
+			return
 		}
 
 		lines := strings.Split(raw, "\n")

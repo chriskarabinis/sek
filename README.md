@@ -313,7 +313,7 @@ sek whois -d example.com -r
   ns2.example.com
 ```
 
-> Note: Some TLDs (e.g. `.gr`) do not operate a public WHOIS server on port 43.
+> Note: Some TLDs (e.g. `.gr`) do not operate a public WHOIS server on port 43. For those, `sek whois` displays TLD registry info from IANA and shows a link to the web-based lookup (e.g. `https://grweb.ics.forth.gr/` for `.gr`).
 
 ---
 
