@@ -99,6 +99,7 @@ Available commands:
   sek dns      — DNS record lookup
   sek cert     — SSL/TLS certificate info
   sek whois    — WHOIS domain lookup
+  sek scan     — Port scanner
   sek version  — Show current version`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()
