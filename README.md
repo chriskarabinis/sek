@@ -54,6 +54,7 @@ sudo mv sek /usr/local/bin/
 | [`sek whois`](#sek-whois) | WHOIS domain lookup — registrar, dates, nameservers |
 | [`sek scan`](#sek-scan) | Port scanner — open ports, services, banners, firewall detection |
 | [`sek headers`](#sek-headers) | HTTP security headers checker |
+| [`sek ip`](#sek-ip) | IP geolocation — country, city, ISP, ASN |
 | [`sek update`](#sek-update) | Update sek to the latest version |
 | [`sek uninstall`](#sek-uninstall) | Remove sek from your system |
 
@@ -422,6 +423,43 @@ sek headers -d example.com --all
 ```
 
 Score labels: `Excellent` (7/7) · `Good` (≥5) · `Fair` (≥3) · `Poor` (<3)
+
+---
+
+## sek ip
+
+Look up geolocation, ISP, ASN, and network info for an IP address or domain.
+
+### Usage
+
+```bash
+sek ip -d <IP or domain>
+```
+
+### Examples
+
+```bash
+sek ip -d 8.8.8.8
+sek ip -d example.com
+```
+
+### Output
+
+```
+[*] IP Lookup for: example.com
+
+  IP              93.184.216.34
+  Country         United States (US)
+  Region          Massachusetts
+  City            Norwood
+  Coordinates     42.1615, -71.2065
+  Timezone        America/New_York
+  ISP             Edgecast Inc.
+  Organization    MCI Communications Services
+  ASN             AS15133 Edgecast Inc.
+```
+
+> Uses [ip-api.com](http://ip-api.com) — free, no API key required (45 req/min).
 
 ---
 
