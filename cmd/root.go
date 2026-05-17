@@ -10,7 +10,7 @@ import (
 const (
 	yellow  = "\033[93m"
 	reset   = "\033[0m"
-	version = "0.1.1"
+	version = "0.1.2"
 )
 
 // Global flags available to all commands
@@ -100,6 +100,7 @@ Available commands:
   sek cert     — SSL/TLS certificate info
   sek whois    — WHOIS domain lookup
   sek scan     — Port scanner
+  sek update   — Update to the latest version
   sek version  — Show current version`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()

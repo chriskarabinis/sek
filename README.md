@@ -58,6 +58,7 @@ sudo mv sek /usr/local/bin/
 | `sek cert` | SSL/TLS certificate info — expiry, issuer, SANs, TLS version |
 | `sek whois` | WHOIS domain lookup — registrar, dates, nameservers |
 | `sek scan` | Port scanner — open ports, services, banners, firewall detection |
+| `sek update` | Update sek to the latest version |
 | `sek version` | Show current version |
 
 ---
