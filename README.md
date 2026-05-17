@@ -45,6 +45,7 @@ sudo mv sek /usr/local/bin/
 |---------|-------------|
 | `sek sub` | Subdomain enumeration |
 | `sek dns` | DNS record lookup + platform detection |
+| `sek cert` | SSL/TLS certificate info — expiry, issuer, SANs, TLS version |
 | `sek version` | Show current version |
 
 ---
@@ -198,6 +199,67 @@ Also shows:
 - **TTL** for every record
 - **Wildcard DNS detection** — checks if `*.domain` resolves to anything
 - **Platform detection** via NS records, CNAME patterns, and Cloudflare IP ranges. Supports global providers (Cloudflare, AWS, Azure, Akamai, Fastly) and Greek providers (Fastpath, Papaki, Top.Host, Forthnet, Cosmote).
+
+---
+
+---
+
+## sek cert
+
+Inspect SSL/TLS certificates for a domain.
+
+### Usage
+
+```bash
+sek cert -d <domain> [flags]
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `-d` | Target domain (required) |
+| `-p` | Port (default: 443) |
+| `-c` | Show full certificate chain |
+| `--insecure` | Skip verification (for self-signed certs) |
+
+### Examples
+
+```bash
+# Basic
+sek cert -d example.com
+
+# With chain
+sek cert -d example.com -c
+
+# Custom port
+sek cert -d example.com -p 8443
+```
+
+### Output
+
+```
+[*] SSL/TLS Certificate for: example.com
+
+[*] Certificate
+  Subject       example.com
+  Issuer        R12
+  Org           Let's Encrypt
+  Valid From    2026-01-01 00:00:00 UTC
+  Valid To      2026-04-01 00:00:00 UTC
+  Days Left     71 days  [OK]
+  Serial        ABC123...
+
+[*] Subject Alternative Names (SANs)
+  example.com
+  www.example.com
+
+[*] TLS
+  Version       TLS 1.3
+  Cipher        TLS_AES_128_GCM_SHA256
+```
+
+Status labels: `[OK]` · `[EXPIRING SOON]` (≤30 days) · `[EXPIRED]`
 
 ---
 
