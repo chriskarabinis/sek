@@ -59,6 +59,7 @@ sudo mv sek /usr/local/bin/
 | `sek whois` | WHOIS domain lookup — registrar, dates, nameservers |
 | `sek scan` | Port scanner — open ports, services, banners, firewall detection |
 | `sek update` | Update sek to the latest version |
+| `sek uninstall` | Remove sek from your system |
 | `sek version` | Show current version |
 
 ---

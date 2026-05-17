@@ -100,8 +100,9 @@ Available commands:
   sek cert     — SSL/TLS certificate info
   sek whois    — WHOIS domain lookup
   sek scan     — Port scanner
-  sek update   — Update to the latest version
-  sek version  — Show current version`,
+  sek update     — Update to the latest version
+  sek uninstall  — Remove sek from your system
+  sek version    — Show current version`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()
 	},
