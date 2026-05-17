@@ -27,6 +27,7 @@ Version ` + version + `
 
 Available commands:
   sek sub      — Subdomain enumeration
+  sek dns      — DNS record lookup
   sek version  — Show current version`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()
