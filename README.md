@@ -55,6 +55,7 @@ sudo mv sek /usr/local/bin/
 | [`sek scan`](#sek-scan) | Port scanner — open ports, services, banners, firewall detection |
 | [`sek headers`](#sek-headers) | HTTP security headers checker |
 | [`sek ip`](#sek-ip) | IP geolocation — country, city, ISP, ASN |
+| [`sek tf`](#sek-tf) | Technology fingerprinting — CMS, frameworks, analytics, CDN |
 | [`sek update`](#sek-update) | Update sek to the latest version |
 | [`sek uninstall`](#sek-uninstall) | Remove sek from your system |
 
@@ -460,6 +461,57 @@ sek ip -d example.com
 ```
 
 > Uses [ip-api.com](http://ip-api.com) — free, no API key required (45 req/min).
+
+---
+
+## sek tf
+
+Detect technologies used by a website — web server, language, CMS, JS frameworks, analytics, and CDN.
+
+### Usage
+
+```bash
+sek tf -d <domain> [flags]
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `-d` | Target domain (required) |
+| `--http` | Use HTTP instead of HTTPS |
+
+### Examples
+
+```bash
+sek tf -d example.com
+sek tf -d example.com --http
+```
+
+### Output
+
+```
+[*] Technology Fingerprint for: example.com
+
+[*] Web Server
+  nginx
+
+[*] CMS
+  WordPress
+
+[*] JS Library
+  jQuery
+  Bootstrap
+
+[*] Analytics
+  Google Analytics
+  Google Tag Manager
+
+[*] CDN / Security
+  Cloudflare
+```
+
+Detects: web servers, languages (PHP, ASP.NET, Node.js, Java), CMS (WordPress, Joomla, Drupal, Shopify...), JS frameworks (React, Vue, Next.js, Angular...), analytics, and CDN/security layers.
 
 ---
 

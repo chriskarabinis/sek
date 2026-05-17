@@ -102,6 +102,7 @@ Available commands:
   sek scan     — Port scanner
   sek headers  — HTTP security headers checker
   sek ip       — IP geolocation lookup
+  sek tf       — Technology fingerprinting
   sek update     — Update to the latest version
   sek uninstall  — Remove sek from your system
   sek version    — Show current version`,
