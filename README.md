@@ -121,6 +121,7 @@ Query DNS records for a domain and automatically detect the hosting/CDN platform
 
 ```bash
 sek dns -d <domain> [flags]
+sek dns -r <ip>
 ```
 
 ### Flags
@@ -128,7 +129,9 @@ sek dns -d <domain> [flags]
 | Flag | Long | Description |
 |------|------|-------------|
 | `-d` | `--domain` | Target domain (required) |
-| `-t` | `--type` | Record type: A, MX, NS, TXT, CNAME (default: all) |
+| `-t` | `--type` | Record type: A, MX, NS, TXT, CNAME, SOA, CAA, EMAIL (default: all) |
+| `-s` | `--server` | Custom DNS server (e.g. 8.8.8.8) |
+| `-r` | `--reverse` | Reverse DNS lookup for an IP address |
 
 ### Examples
 
@@ -139,6 +142,15 @@ sek dns -d example.com
 # Specific record type
 sek dns -d example.com -t MX
 sek dns -d example.com -t TXT
+sek dns -d example.com -t SOA
+sek dns -d example.com -t EMAIL
+
+# Custom DNS server
+sek dns -d example.com -s 8.8.8.8
+sek dns -d example.com -s 1.1.1.1
+
+# Reverse DNS
+sek dns -r 8.8.8.8
 ```
 
 ### Output
@@ -154,18 +166,25 @@ sek dns -d example.com -t TXT
 
 [*] NS
   NS      ns1.example.com
-  NS      ns2.example.com
 
 [*] TXT
   TXT     v=spf1 include:_spf.example.com ~all
 
-[*] CNAME
-  No records found.
+[*] SOA
+  SOA     primary: ns1.example.com | admin: admin@example.com | serial: 2024010101 | refresh: 900s
+
+[*] CAA
+  CAA     0 issue "letsencrypt.org"
+
+[*] Email Security (SPF / DMARC / DKIM)
+  SPF     v=spf1 include:_spf.example.com ~all
+  DMARC   v=DMARC1; p=reject; rua=mailto:dmarc@example.com
+  DKIM    [google] v=DKIM1; k=rsa; p=...
 
 [*] Platform detected: Cloudflare
 ```
 
-Detects platforms via NS records, CNAME patterns, and IP ranges. Supports global providers (Cloudflare, AWS, Azure, Akamai, Fastly) and Greek providers (Papaki, Top.Host, Forthnet, Cosmote).
+Detects platforms via NS records, CNAME patterns, and Cloudflare IP ranges. Supports global providers (Cloudflare, AWS, Azure, Akamai, Fastly) and Greek providers (Fastpath, Papaki, Top.Host, Forthnet, Cosmote).
 
 ---
 
