@@ -10,7 +10,7 @@ import (
 const (
 	yellow  = "\033[93m"
 	reset   = "\033[0m"
-	version = "0.1.2"
+	version = "0.1.3"
 )
 
 // Global flags available to all commands
