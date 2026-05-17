@@ -33,6 +33,7 @@ sudo mv sek /usr/local/bin/
 | Command | Description |
 |---------|-------------|
 | `sek sub` | Subdomain enumeration |
+| `sek dns` | DNS record lookup + platform detection |
 | `sek version` | Show current version |
 
 ---
@@ -107,6 +108,64 @@ For deep enumeration, use [SecLists](https://github.com/danielmiessler/SecLists)
 brew install seclists
 sek sub -d example.com -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt
 ```
+
+---
+
+---
+
+## sek dns
+
+Query DNS records for a domain and automatically detect the hosting/CDN platform.
+
+### Usage
+
+```bash
+sek dns -d <domain> [flags]
+```
+
+### Flags
+
+| Flag | Long | Description |
+|------|------|-------------|
+| `-d` | `--domain` | Target domain (required) |
+| `-t` | `--type` | Record type: A, MX, NS, TXT, CNAME (default: all) |
+
+### Examples
+
+```bash
+# All records
+sek dns -d example.com
+
+# Specific record type
+sek dns -d example.com -t MX
+sek dns -d example.com -t TXT
+```
+
+### Output
+
+```
+[*] DNS lookup for: example.com
+
+[*] A / AAAA
+  A       93.184.216.34
+
+[*] MX
+  MX      mail.example.com (priority: 10)
+
+[*] NS
+  NS      ns1.example.com
+  NS      ns2.example.com
+
+[*] TXT
+  TXT     v=spf1 include:_spf.example.com ~all
+
+[*] CNAME
+  No records found.
+
+[*] Platform detected: Cloudflare
+```
+
+Detects platforms via NS records, CNAME patterns, and IP ranges. Supports global providers (Cloudflare, AWS, Azure, Akamai, Fastly) and Greek providers (Papaki, Top.Host, Forthnet, Cosmote).
 
 ---
 
