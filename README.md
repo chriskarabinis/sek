@@ -46,6 +46,7 @@ sudo mv sek /usr/local/bin/
 | `sek sub` | Subdomain enumeration |
 | `sek dns` | DNS record lookup + platform detection |
 | `sek cert` | SSL/TLS certificate info — expiry, issuer, SANs, TLS version |
+| `sek whois` | WHOIS domain lookup — registrar, dates, nameservers |
 | `sek version` | Show current version |
 
 ---
@@ -260,6 +261,59 @@ sek cert -d example.com -p 8443
 ```
 
 Status labels: `[OK]` · `[EXPIRING SOON]` (≤30 days) · `[EXPIRED]`
+
+---
+
+---
+
+## sek whois
+
+Query WHOIS information for a domain.
+
+### Usage
+
+```bash
+sek whois -d <domain> [flags]
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `-d` | Target domain (required) |
+| `-r` | Show raw WHOIS response |
+
+### Examples
+
+```bash
+# Parsed output
+sek whois -d example.com
+
+# Raw response
+sek whois -d example.com -r
+```
+
+### Output
+
+```
+[*] WHOIS lookup for: example.com
+
+[*] Querying: whois.verisign-grs.com
+
+[*] Domain Info
+  Registrar     MarkMonitor Inc.
+  Created       1997-09-15T04:00:00Z
+  Updated       2024-01-01T00:00:00Z
+  Expires       2028-09-14T04:00:00Z
+  Status        clientDeleteProhibited
+  DNSSEC        unsigned
+
+[*] Name Servers
+  ns1.example.com
+  ns2.example.com
+```
+
+> Note: Some TLDs (e.g. `.gr`) do not operate a public WHOIS server on port 43.
 
 ---
 
