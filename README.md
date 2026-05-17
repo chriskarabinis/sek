@@ -11,30 +11,22 @@ A fast, modular security toolkit for the terminal. Written in Go — single bina
 
 ---
 
-## Global Flags
-
-Available on all commands:
-
-| Flag | Description |
-|------|-------------|
-| `-o results.txt` | Save output to file |
-| `--no-color` | Disable colored output (auto-disabled when piping) |
-
----
-
 ## Installation
 
-### Install script (macOS & Linux) — recommended
+### Install script — recommended (macOS & Linux)
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chriskarabinis/sek/main/install.sh | bash
 ```
 
 ### Using Go
+
 ```bash
 go install github.com/chriskarabinis/sek@latest
 ```
 
 ### Clone & Build
+
 ```bash
 git clone https://github.com/chriskarabinis/sek.git
 cd sek
@@ -48,22 +40,32 @@ sudo mv sek /usr/local/bin/
 
 | Command | Description |
 |---------|-------------|
-| `sek sub` | Subdomain enumeration |
-| `sek dns` | DNS record lookup + platform detection |
-| `sek cert` | SSL/TLS certificate info — expiry, issuer, SANs, TLS version |
-| `sek whois` | WHOIS domain lookup — registrar, dates, nameservers |
-| `sek scan` | Port scanner — open ports, services, banners, firewall detection |
-| `sek update` | Update sek to the latest version |
-| `sek uninstall` | Remove sek from your system |
-| `sek version` | Show current version |
+| [`sek sub`](#sek-sub) | Subdomain enumeration |
+| [`sek dns`](#sek-dns) | DNS record lookup + platform detection |
+| [`sek cert`](#sek-cert) | SSL/TLS certificate info — expiry, issuer, SANs, TLS version |
+| [`sek whois`](#sek-whois) | WHOIS domain lookup — registrar, dates, nameservers |
+| [`sek scan`](#sek-scan) | Port scanner — open ports, services, banners, firewall detection |
+| [`sek update`](#sek-update) | Update sek to the latest version |
+| [`sek uninstall`](#sek-uninstall) | Remove sek from your system |
+
+---
+
+## Global Flags
+
+Available on all commands:
+
+| Flag | Description |
+|------|-------------|
+| `-o results.txt` | Save output to file |
+| `--no-color` | Disable colored output (auto-disabled when piping) |
 
 ---
 
 ## sek sub
 
 Discover subdomains using two methods:
-- **DNS Brute Force** — tests 200+ common subdomain prefixes in parallel
 - **Certificate Transparency Logs** — queries [crt.sh](https://crt.sh) for known subdomains from public SSL certificates
+- **DNS Brute Force** — tests 200+ common subdomain prefixes in parallel
 
 ### Usage
 
@@ -81,17 +83,9 @@ sek sub -d <domain> [flags]
 ### Examples
 
 ```bash
-# Basic scan
 sek sub -d example.com
-
-# Save results to file
 sek sub -d example.com -o results.txt
-
-# Use a custom wordlist
 sek sub -d example.com -w wordlist.txt
-
-# Custom wordlist and save output
-sek sub -d example.com -w wordlist.txt -o results.txt
 ```
 
 ### Output
@@ -131,8 +125,6 @@ sek sub -d example.com -w /usr/share/seclists/Discovery/DNS/subdomains-top1milli
 
 ---
 
----
-
 ## sek dns
 
 Query DNS records for a domain and automatically detect the hosting/CDN platform.
@@ -156,20 +148,10 @@ sek dns -r <ip>
 ### Examples
 
 ```bash
-# All records
 sek dns -d example.com
-
-# Specific record type
 sek dns -d example.com -t MX
-sek dns -d example.com -t TXT
-sek dns -d example.com -t SOA
 sek dns -d example.com -t EMAIL
-
-# Custom DNS server
-sek dns -d example.com -s 8.8.8.8
 sek dns -d example.com -s 1.1.1.1
-
-# Reverse DNS
 sek dns -r 8.8.8.8
 ```
 
@@ -204,12 +186,7 @@ sek dns -r 8.8.8.8
 [*] Platform detected: Cloudflare
 ```
 
-Also shows:
-- **TTL** for every record
-- **Wildcard DNS detection** — checks if `*.domain` resolves to anything
-- **Platform detection** via NS records, CNAME patterns, and Cloudflare IP ranges. Supports global providers (Cloudflare, AWS, Azure, Akamai, Fastly) and Greek providers (Fastpath, Papaki, Top.Host, Forthnet, Cosmote).
-
----
+Also shows TTL for every record, wildcard DNS detection, and platform detection via NS records, CNAME patterns, and IP ranges. Supports global providers (Cloudflare, AWS, Azure, Akamai, Fastly) and Greek providers (Fastpath, Papaki, Top.Host, Forthnet, Cosmote).
 
 ---
 
@@ -235,13 +212,8 @@ sek cert -d <domain> [flags]
 ### Examples
 
 ```bash
-# Basic
 sek cert -d example.com
-
-# With chain
 sek cert -d example.com -c
-
-# Custom port
 sek cert -d example.com -p 8443
 ```
 
@@ -272,8 +244,6 @@ Status labels: `[OK]` · `[EXPIRING SOON]` (≤30 days) · `[EXPIRED]`
 
 ---
 
----
-
 ## sek whois
 
 Query WHOIS information for a domain.
@@ -294,10 +264,7 @@ sek whois -d <domain> [flags]
 ### Examples
 
 ```bash
-# Parsed output
 sek whois -d example.com
-
-# Raw response
 sek whois -d example.com -r
 ```
 
@@ -325,13 +292,9 @@ sek whois -d example.com -r
 
 ---
 
----
-
 ## sek scan
 
-Scan a host for open ports, identify running services, and detect firewall filtering.
-
-Uses TCP connect scanning — no root required.
+Scan a host for open ports, identify running services, and detect firewall filtering. Uses TCP connect scanning — no root required.
 
 ### Usage
 
@@ -344,27 +307,19 @@ sek scan -d <domain or IP> [flags]
 | Flag | Description |
 |------|-------------|
 | `-d` | Target domain or IP (required) |
-| `-p` | Ports to scan: comma-separated or range (e.g. `80,443` or `1-1000`). Default: top 84 common ports |
+| `-p` | Ports: comma-separated or range (e.g. `80,443` or `1-1000`). Default: top 84 common ports |
 | `-t` | Connection timeout in milliseconds (default: 2000) |
 | `--all` | Scan all 65535 ports |
+| `--filter` | Also show filtered (firewalled) ports |
 
 ### Examples
 
 ```bash
-# Default scan (top 84 common ports)
 sek scan -d example.com
-
-# Specific ports
 sek scan -d example.com -p 22,80,443,3306
-
-# Port range
 sek scan -d example.com -p 1-1000
-
-# Full scan
 sek scan -d example.com --all
-
-# Save results to file
-sek scan -d example.com -o results.txt
+sek scan -d example.com --filter
 ```
 
 ### Output
@@ -380,25 +335,52 @@ sek scan -d example.com -o results.txt
   80/tcp       open       HTTP                 nginx/1.18.0
   443/tcp      open       HTTPS                nginx/1.18.0
 
-  PORT         STATE      SERVICE
-  ------------------------------------------------------------------
-  3306/tcp     filtered   MySQL
-  5432/tcp     filtered   PostgreSQL
-
 [*] Done. 3 open  |  2 filtered  |  79 closed
 ```
 
 Port states:
 - **open** — port is accepting connections (service is running)
-- **filtered** — firewall is dropping packets (port is protected)
+- **filtered** — firewall is dropping packets (port is protected, use `--filter` to show)
 - **closed** — host actively refused the connection (no service, no firewall)
+
+---
+
+## sek update
+
+Update sek to the latest version. Detects your OS and architecture automatically.
+
+```bash
+sek update
+```
+
+If permission is denied, run with sudo:
+
+```bash
+sudo sek update
+```
+
+---
+
+## sek uninstall
+
+Remove sek from your system.
+
+```bash
+sek uninstall
+```
+
+If permission is denied, run with sudo:
+
+```bash
+sudo sek uninstall
+```
 
 ---
 
 ## Requirements
 
-- Go 1.21+
 - macOS or Linux
+- Go 1.21+ (only if installing via `go install` or building from source)
 
 ---
 
