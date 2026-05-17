@@ -15,10 +15,11 @@ import (
 )
 
 // flags
-var scanTarget  string
-var scanPorts   string
-var scanTimeout int
-var scanAll     bool
+var scanTarget     string
+var scanPorts      string
+var scanTimeout    int
+var scanAll        bool
+var scanShowFilter bool
 
 type scanResult struct {
 	port    int
@@ -369,26 +370,28 @@ var scanCmd = &cobra.Command{
 			WriteLineColored(yellow+plain+reset, plain)
 		}
 
-		// Also print filtered ports (separately, after open)
-		hasFiltered := false
-		for _, r := range results {
-			if r.state != "filtered" {
-				continue
-			}
-			if !hasFiltered {
-				WriteLine("")
-				plain := fmt.Sprintf("  %-12s %-10s %-20s %s", "PORT", "STATE", "SERVICE", "")
+		// Print filtered ports only if --filter is set
+		if scanShowFilter {
+			hasFiltered := false
+			for _, r := range results {
+				if r.state != "filtered" {
+					continue
+				}
+				if !hasFiltered {
+					WriteLine("")
+					plain := fmt.Sprintf("  %-12s %-10s %-20s", "PORT", "STATE", "SERVICE")
+					WriteLineColored(yellow+plain+reset, plain)
+					WriteLine("  " + strings.Repeat("-", 66))
+					hasFiltered = true
+				}
+				portStr := fmt.Sprintf("%d/tcp", r.port)
+				svc := r.service
+				if svc == "" {
+					svc = "unknown"
+				}
+				plain := fmt.Sprintf("  %-12s %-10s %-20s", portStr, r.state, svc)
 				WriteLineColored(yellow+plain+reset, plain)
-				WriteLine("  " + strings.Repeat("-", 66))
-				hasFiltered = true
 			}
-			portStr := fmt.Sprintf("%d/tcp", r.port)
-			svc := r.service
-			if svc == "" {
-				svc = "unknown"
-			}
-			plain := fmt.Sprintf("  %-12s %-10s %-20s", portStr, r.state, svc)
-			WriteLineColored(yellow+plain+reset, plain)
 		}
 
 		if openCount == 0 && filteredCount == 0 {
@@ -407,5 +410,6 @@ func init() {
 	scanCmd.Flags().StringVarP(&scanPorts, "ports", "p", "", "Ports: comma-separated or range (e.g. 80,443 or 1-1000). Default: top 85 common ports")
 	scanCmd.Flags().IntVarP(&scanTimeout, "timeout", "t", 2000, "Connection timeout in milliseconds")
 	scanCmd.Flags().BoolVar(&scanAll, "all", false, "Scan all 65535 ports")
+	scanCmd.Flags().BoolVar(&scanShowFilter, "filter", false, "Also show filtered (firewalled) ports")
 	rootCmd.AddCommand(scanCmd)
 }
