@@ -18,19 +18,40 @@ var headersPort    string
 var headersAll     bool
 
 type secHeader struct {
-	key         string
-	description string
+	key  string
+	fix  string
 }
 
-// securityHeaders lists the headers checked and why they matter
+// securityHeaders lists the headers checked with a recommended value to add if missing
 var securityHeaders = []secHeader{
-	{"Strict-Transport-Security", "Forces HTTPS — prevents downgrade attacks"},
-	{"Content-Security-Policy", "Prevents XSS and data injection attacks"},
-	{"X-Frame-Options", "Prevents clickjacking"},
-	{"X-Content-Type-Options", "Prevents MIME type sniffing"},
-	{"Referrer-Policy", "Controls how much referrer info is sent"},
-	{"Permissions-Policy", "Restricts access to browser features"},
-	{"X-XSS-Protection", "Legacy XSS filter (older browsers)"},
+	{
+		"Strict-Transport-Security",
+		"Strict-Transport-Security: max-age=31536000; includeSubDomains",
+	},
+	{
+		"Content-Security-Policy",
+		"Content-Security-Policy: default-src 'self'",
+	},
+	{
+		"X-Frame-Options",
+		"X-Frame-Options: SAMEORIGIN",
+	},
+	{
+		"X-Content-Type-Options",
+		"X-Content-Type-Options: nosniff",
+	},
+	{
+		"Referrer-Policy",
+		"Referrer-Policy: strict-origin-when-cross-origin",
+	},
+	{
+		"Permissions-Policy",
+		"Permissions-Policy: camera=(), microphone=(), geolocation=()",
+	},
+	{
+		"X-XSS-Protection",
+		"X-XSS-Protection: 1; mode=block",
+	},
 }
 
 func scoreLabel(present, total int) string {
@@ -111,6 +132,7 @@ var headersCmd = &cobra.Command{
 		WriteLine("  " + strings.Repeat("-", 80))
 
 		present := 0
+		var missing []secHeader
 		for _, sh := range securityHeaders {
 			val := resp.Header.Get(sh.key)
 			state := "MISSING"
@@ -119,6 +141,8 @@ var headersCmd = &cobra.Command{
 				state = "PRESENT"
 				display = val
 				present++
+			} else {
+				missing = append(missing, sh)
 			}
 			// Truncate long values for display
 			if len(display) > 60 {
@@ -133,6 +157,18 @@ var headersCmd = &cobra.Command{
 		score := fmt.Sprintf("[*] Score: %d/%d — %s", present, len(securityHeaders), label)
 		WriteLineColored(yellow+score+reset, score)
 		WriteLine("")
+
+		// Recommendations for missing headers
+		if len(missing) > 0 {
+			WriteLine("[*] Recommendations")
+			for _, sh := range missing {
+				plain := fmt.Sprintf("  Add to your server config:")
+				WriteLineColored(yellow+plain+reset, plain)
+				plain = fmt.Sprintf("  %s", sh.fix)
+				WriteLineColored(yellow+plain+reset, plain)
+				WriteLine("")
+			}
+		}
 
 		// All headers
 		if headersAll {
