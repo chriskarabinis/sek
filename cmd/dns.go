@@ -16,10 +16,11 @@ var dnsType    string
 var dnsServer  string
 var dnsReverse string
 
-// dnsRecord holds a single DNS record result
+// dnsRecord holds a single DNS record with its TTL
 type dnsRecord struct {
 	recordType string
 	value      string
+	ttl        uint32
 }
 
 // knownProviders maps hostname keywords to provider names
@@ -58,8 +59,7 @@ var knownProviders = []struct {
 	{"hosting.gr", "Hosting.gr (GR)"},
 }
 
-// ipProviders maps known IP prefixes to provider names
-// Only providers that officially publish their IP ranges
+// ipProviders maps known IP prefixes to provider names (verified/official ranges only)
 var ipProviders = []struct {
 	prefix   string
 	provider string
@@ -77,7 +77,7 @@ var ipProviders = []struct {
 	{"190.93.", "Cloudflare"}, {"197.234.", "Cloudflare"}, {"198.41.", "Cloudflare"},
 }
 
-// getServer returns the DNS server to use — custom or system default
+// getServer returns the DNS server to use
 func getServer(custom string) string {
 	if custom != "" {
 		if !strings.Contains(custom, ":") {
@@ -88,7 +88,7 @@ func getServer(custom string) string {
 	config, err := dns.ClientConfigFromFile("/etc/resolv.conf")
 	if err == nil {
 		for _, srv := range config.Servers {
-			// Skip IPv6 link-local addresses (fe80::) — not supported by miekg/dns
+			// Skip IPv6 link-local addresses (fe80::) — not handled by miekg/dns
 			if strings.HasPrefix(srv, "fe80") {
 				continue
 			}
@@ -98,8 +98,7 @@ func getServer(custom string) string {
 	return "8.8.8.8:53"
 }
 
-// dnsQuery sends a DNS query for the given record type to the specified server
-// Falls back to TCP if the UDP response is truncated
+// dnsQuery sends a DNS query, retrying with TCP if the UDP response is truncated
 func dnsQuery(domain, server string, qtype uint16) ([]dns.RR, error) {
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(domain), qtype)
@@ -131,14 +130,14 @@ func lookupA(domain, server string) []dnsRecord {
 	if rrs, _ := dnsQuery(domain, server, dns.TypeA); rrs != nil {
 		for _, rr := range rrs {
 			if a, ok := rr.(*dns.A); ok {
-				records = append(records, dnsRecord{"A", a.A.String()})
+				records = append(records, dnsRecord{"A", a.A.String(), a.Hdr.Ttl})
 			}
 		}
 	}
 	if rrs, _ := dnsQuery(domain, server, dns.TypeAAAA); rrs != nil {
 		for _, rr := range rrs {
 			if aaaa, ok := rr.(*dns.AAAA); ok {
-				records = append(records, dnsRecord{"AAAA", aaaa.AAAA.String()})
+				records = append(records, dnsRecord{"AAAA", aaaa.AAAA.String(), aaaa.Hdr.Ttl})
 			}
 		}
 	}
@@ -153,6 +152,7 @@ func lookupMX(domain, server string) []dnsRecord {
 			records = append(records, dnsRecord{
 				"MX",
 				fmt.Sprintf("%s (priority: %d)", strings.TrimSuffix(mx.Mx, "."), mx.Preference),
+				mx.Hdr.Ttl,
 			})
 		}
 	}
@@ -164,7 +164,7 @@ func lookupNS(domain, server string) []dnsRecord {
 	var records []dnsRecord
 	for _, rr := range rrs {
 		if ns, ok := rr.(*dns.NS); ok {
-			records = append(records, dnsRecord{"NS", strings.TrimSuffix(ns.Ns, ".")})
+			records = append(records, dnsRecord{"NS", strings.TrimSuffix(ns.Ns, "."), ns.Hdr.Ttl})
 		}
 	}
 	return records
@@ -175,7 +175,7 @@ func lookupTXT(domain, server string) []dnsRecord {
 	var records []dnsRecord
 	for _, rr := range rrs {
 		if txt, ok := rr.(*dns.TXT); ok {
-			records = append(records, dnsRecord{"TXT", strings.Join(txt.Txt, "")})
+			records = append(records, dnsRecord{"TXT", strings.Join(txt.Txt, ""), txt.Hdr.Ttl})
 		}
 	}
 	return records
@@ -186,7 +186,7 @@ func lookupCNAME(domain, server string) []dnsRecord {
 	var records []dnsRecord
 	for _, rr := range rrs {
 		if cname, ok := rr.(*dns.CNAME); ok {
-			records = append(records, dnsRecord{"CNAME", strings.TrimSuffix(cname.Target, ".")})
+			records = append(records, dnsRecord{"CNAME", strings.TrimSuffix(cname.Target, "."), cname.Hdr.Ttl})
 		}
 	}
 	return records
@@ -197,7 +197,6 @@ func lookupSOA(domain, server string) []dnsRecord {
 	var records []dnsRecord
 	for _, rr := range rrs {
 		if soa, ok := rr.(*dns.SOA); ok {
-			// Convert DNS mbox format (admin.example.com) to email (admin@example.com)
 			mbox := strings.TrimSuffix(soa.Mbox, ".")
 			parts := strings.SplitN(mbox, ".", 2)
 			email := mbox
@@ -205,12 +204,8 @@ func lookupSOA(domain, server string) []dnsRecord {
 				email = parts[0] + "@" + parts[1]
 			}
 			value := fmt.Sprintf("primary: %s | admin: %s | serial: %d | refresh: %ds",
-				strings.TrimSuffix(soa.Ns, "."),
-				email,
-				soa.Serial,
-				soa.Refresh,
-			)
-			records = append(records, dnsRecord{"SOA", value})
+				strings.TrimSuffix(soa.Ns, "."), email, soa.Serial, soa.Refresh)
+			records = append(records, dnsRecord{"SOA", value, soa.Hdr.Ttl})
 		}
 	}
 	return records
@@ -224,6 +219,7 @@ func lookupCAA(domain, server string) []dnsRecord {
 			records = append(records, dnsRecord{
 				"CAA",
 				fmt.Sprintf("%d %s \"%s\"", caa.Flag, caa.Tag, caa.Value),
+				caa.Hdr.Ttl,
 			})
 		}
 	}
@@ -234,26 +230,23 @@ func lookupCAA(domain, server string) []dnsRecord {
 func lookupEmailSecurity(domain, server string) []dnsRecord {
 	var records []dnsRecord
 
-	// SPF — lives in TXT records of the root domain
 	for _, txt := range lookupTXT(domain, server) {
 		if strings.HasPrefix(txt.value, "v=spf1") {
-			records = append(records, dnsRecord{"SPF", txt.value})
+			records = append(records, dnsRecord{"SPF", txt.value, txt.ttl})
 		}
 	}
 
-	// DMARC — TXT record at _dmarc.<domain>
 	for _, txt := range lookupTXT("_dmarc."+domain, server) {
 		if strings.HasPrefix(txt.value, "v=DMARC1") {
-			records = append(records, dnsRecord{"DMARC", txt.value})
+			records = append(records, dnsRecord{"DMARC", txt.value, txt.ttl})
 		}
 	}
 
-	// DKIM — try common selectors
 	selectors := []string{"google", "default", "mail", "k1", "s1", "s2", "selector1", "selector2", "dkim", "smtp"}
 	for _, sel := range selectors {
 		for _, txt := range lookupTXT(sel+"._domainkey."+domain, server) {
 			if strings.Contains(txt.value, "v=DKIM1") {
-				records = append(records, dnsRecord{"DKIM", fmt.Sprintf("[%s] %s", sel, txt.value)})
+				records = append(records, dnsRecord{"DKIM", fmt.Sprintf("[%s] %s", sel, txt.value), txt.ttl})
 			}
 		}
 	}
@@ -269,26 +262,42 @@ func lookupReverse(ip string) []dnsRecord {
 	}
 	var records []dnsRecord
 	for _, h := range hostnames {
-		records = append(records, dnsRecord{"PTR", strings.TrimSuffix(h, ".")})
+		records = append(records, dnsRecord{"PTR", strings.TrimSuffix(h, "."), 0})
 	}
 	return records
 }
 
+// detectWildcard checks if the domain has a wildcard DNS record
+func detectWildcard(domain, server string) string {
+	randomSub := "ck-wildcard-test-xr7z2." + domain
+	rrs, _ := dnsQuery(randomSub, server, dns.TypeA)
+	for _, rr := range rrs {
+		if a, ok := rr.(*dns.A); ok {
+			return a.A.String()
+		}
+	}
+	return ""
+}
+
 func printDNSRecords(records []dnsRecord) {
 	for _, r := range records {
-		line := fmt.Sprintf("  %-6s  %s", r.recordType, r.value)
-		fmt.Println(yellow + line + reset)
+		ttlStr := ""
+		if r.ttl > 0 {
+			ttlStr = fmt.Sprintf("  TTL: %ds", r.ttl)
+		}
+		plain := fmt.Sprintf("  %-6s  %-50s%s", r.recordType, r.value, ttlStr)
+		WriteLineColored(yellow+plain+reset, plain)
 	}
 }
 
 func printSection(title string, records []dnsRecord) {
-	fmt.Printf("[*] %s\n", title)
+	WriteLine(fmt.Sprintf("[*] %s", title))
 	if len(records) == 0 {
-		fmt.Println("  No records found.")
+		WriteLine("  No records found.")
 	} else {
 		printDNSRecords(records)
 	}
-	fmt.Println()
+	WriteLine("")
 }
 
 // --- Platform detection ---
@@ -346,18 +355,22 @@ var dnsCmd = &cobra.Command{
 	Short: "DNS record lookup",
 	Long:  `Query DNS records for a domain. Supports A, AAAA, MX, NS, TXT, CNAME, SOA, CAA, and email security (SPF, DMARC, DKIM).`,
 	Run: func(cmd *cobra.Command, args []string) {
+		InitOutput()
+		defer CloseOutput()
+
 		server := getServer(dnsServer)
 
 		// Reverse DNS mode
 		if dnsReverse != "" {
-			fmt.Printf("\n%s[*] Reverse DNS for: %s%s\n\n", yellow, dnsReverse, reset)
+			plain := fmt.Sprintf("\n[*] Reverse DNS for: %s\n", dnsReverse)
+			WriteLineColored(yellow+plain+reset, plain)
 			records := lookupReverse(dnsReverse)
 			if len(records) == 0 {
-				fmt.Println("  No PTR records found.")
+				WriteLine("  No PTR records found.")
 			} else {
 				printDNSRecords(records)
 			}
-			fmt.Println()
+			WriteLine("")
 			return
 		}
 
@@ -366,7 +379,8 @@ var dnsCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		fmt.Printf("\n%s[*] DNS lookup for: %s%s\n\n", yellow, dnsDomain, reset)
+		header := fmt.Sprintf("\n[*] DNS lookup for: %s\n", dnsDomain)
+		WriteLineColored(yellow+header+reset, header)
 
 		recordType := strings.ToUpper(dnsType)
 
@@ -388,7 +402,6 @@ var dnsCmd = &cobra.Command{
 		case "EMAIL":
 			printSection("Email Security (SPF / DMARC / DKIM)", lookupEmailSecurity(dnsDomain, server))
 		default:
-			// Show all records
 			printSection("A / AAAA", lookupA(dnsDomain, server))
 			printSection("MX", lookupMX(dnsDomain, server))
 			printSection("NS", lookupNS(dnsDomain, server))
@@ -397,6 +410,16 @@ var dnsCmd = &cobra.Command{
 			printSection("SOA", lookupSOA(dnsDomain, server))
 			printSection("CAA", lookupCAA(dnsDomain, server))
 			printSection("Email Security (SPF / DMARC / DKIM)", lookupEmailSecurity(dnsDomain, server))
+
+			// Wildcard detection
+			WriteLine("[*] Wildcard DNS")
+			if ip := detectWildcard(dnsDomain, server); ip != "" {
+				plain := fmt.Sprintf("  *.%s  ->  %s  (wildcard detected)", dnsDomain, ip)
+				WriteLineColored(yellow+plain+reset, plain)
+			} else {
+				WriteLine("  No wildcard DNS detected.")
+			}
+			WriteLine("")
 		}
 
 		// Platform detection
@@ -404,7 +427,8 @@ var dnsCmd = &cobra.Command{
 		if platform == "" {
 			platform = "Custom / Unknown"
 		}
-		fmt.Printf("%s[*] Platform detected: %s%s\n\n", yellow, platform, reset)
+		plain := fmt.Sprintf("[*] Platform detected: %s\n", platform)
+		WriteLineColored(yellow+plain+reset, plain)
 	},
 }
 

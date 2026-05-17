@@ -11,6 +11,17 @@ A fast, modular security toolkit for the terminal. Written in Go — single bina
 
 ---
 
+## Global Flags
+
+Available on all commands:
+
+| Flag | Description |
+|------|-------------|
+| `-o results.txt` | Save output to file |
+| `--no-color` | Disable colored output (auto-disabled when piping) |
+
+---
+
 ## Installation
 
 ### Using Go
@@ -55,7 +66,6 @@ sek sub -d <domain> [flags]
 | Flag | Long | Description |
 |------|------|-------------|
 | `-d` | `--domain` | Target domain (required) |
-| `-o` | `--output` | Save results to file |
 | `-w` | `--wordlist` | Custom wordlist file |
 
 ### Examples
@@ -184,7 +194,10 @@ sek dns -r 8.8.8.8
 [*] Platform detected: Cloudflare
 ```
 
-Detects platforms via NS records, CNAME patterns, and Cloudflare IP ranges. Supports global providers (Cloudflare, AWS, Azure, Akamai, Fastly) and Greek providers (Fastpath, Papaki, Top.Host, Forthnet, Cosmote).
+Also shows:
+- **TTL** for every record
+- **Wildcard DNS detection** — checks if `*.domain` resolves to anything
+- **Platform detection** via NS records, CNAME patterns, and Cloudflare IP ranges. Supports global providers (Cloudflare, AWS, Azure, Akamai, Fastly) and Greek providers (Fastpath, Papaki, Top.Host, Forthnet, Cosmote).
 
 ---
 

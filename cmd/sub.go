@@ -14,16 +14,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// ANSI color codes
-const (
-	colorYellow = "\033[93m"
-	colorReset  = "\033[0m"
-)
-
 // flags
-var subDomain      string
-var subOutput      string
-var subWordlist    string
+var subDomain    string
+var subWordlist  string
 
 // built-in wordlist
 var wordlist = []string{
@@ -92,8 +85,8 @@ var wordlist = []string{
 }
 
 type findResult struct {
-	host   string
-	ips    []string
+	host string
+	ips  []string
 }
 
 type crtEntry struct {
@@ -131,7 +124,7 @@ func fetchFromCrtSh(domain string) ([]string, error) {
 	return results, nil
 }
 
-func lookupIPs(host string) []string {
+func subLookupIPs(host string) []string {
 	ips, err := net.LookupHost(host)
 	if err != nil {
 		return nil
@@ -184,33 +177,8 @@ var subCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Set up file writer if -o flag was provided
-		var fileWriter *bufio.Writer
-		if subOutput != "" {
-			f, err := os.Create(subOutput)
-			if err != nil {
-				fmt.Printf("[!] Cannot create output file: %s\n", err)
-				os.Exit(1)
-			}
-			defer f.Close()
-			fileWriter = bufio.NewWriter(f)
-			defer fileWriter.Flush()
-		}
-
-		writeLine := func(line string) {
-			fmt.Println(line)
-			if fileWriter != nil {
-				fileWriter.WriteString(line + "\n")
-			}
-		}
-
-		writeResult := func(r findResult) {
-			plain := formatSubResult(r)
-			fmt.Println(colorYellow + plain + colorReset)
-			if fileWriter != nil {
-				fileWriter.WriteString(plain + "\n")
-			}
-		}
+		InitOutput()
+		defer CloseOutput()
 
 		// Load wordlist
 		words := wordlist
@@ -221,43 +189,42 @@ var subCmd = &cobra.Command{
 				os.Exit(1)
 			}
 			words = loaded
-			fmt.Printf("[*] Loaded %d words from %s\n", len(words), subWordlist)
+			WriteLine(fmt.Sprintf("[*] Loaded %d words from %s", len(words), subWordlist))
 		}
 
-		// Show main domain IP in yellow
-		domainIPs := lookupIPs(subDomain)
+		// Show main domain IP
+		domainIPs := subLookupIPs(subDomain)
 		domainIPStr := strings.Join(domainIPs, ", ")
 		if domainIPStr == "" {
 			domainIPStr = "N/A"
 		}
-		fmt.Printf("\n%s[*] %s  ->  %s%s\n\n", colorYellow, subDomain, domainIPStr, colorReset)
-		if fileWriter != nil {
-			fileWriter.WriteString(fmt.Sprintf("\n[*] %s  ->  %s\n\n", subDomain, domainIPStr))
-		}
+		header := fmt.Sprintf("\n[*] %s  ->  %s\n", subDomain, domainIPStr)
+		WriteLineColored(yellow+header+reset, header)
 
 		found := make(map[string]bool)
 		var mu sync.Mutex
 
 		// --- Source 1: crt.sh ---
-		writeLine("[*] Querying certificate transparency logs (crt.sh)...")
+		WriteLine("[*] Querying certificate transparency logs (crt.sh)...")
 		crtResults, err := fetchFromCrtSh(subDomain)
 		if err != nil {
-			writeLine(fmt.Sprintf("[!] crt.sh failed: %s", err))
+			WriteLine(fmt.Sprintf("[!] crt.sh failed: %s", err))
 		} else {
 			for _, sub := range crtResults {
 				mu.Lock()
 				if !found[sub] {
 					found[sub] = true
-					ips := lookupIPs(sub)
-					writeResult(findResult{host: sub, ips: ips})
+					ips := subLookupIPs(sub)
+					plain := formatSubResult(findResult{host: sub, ips: ips})
+					WriteLineColored(yellow+plain+reset, plain)
 				}
 				mu.Unlock()
 			}
-			writeLine(fmt.Sprintf("\n  -> %d subdomains from crt.sh", len(crtResults)))
+			WriteLine(fmt.Sprintf("\n  -> %d subdomains from crt.sh", len(crtResults)))
 		}
 
 		// --- Source 2: DNS Brute Force ---
-		writeLine(fmt.Sprintf("\n[*] Running DNS brute force (%d words)...", len(words)))
+		WriteLine(fmt.Sprintf("\n[*] Running DNS brute force (%d words)...", len(words)))
 
 		results := make(chan findResult)
 		var wg sync.WaitGroup
@@ -277,24 +244,19 @@ var subCmd = &cobra.Command{
 			mu.Lock()
 			if !found[r.host] {
 				found[r.host] = true
-				writeResult(r)
+				plain := formatSubResult(r)
+				WriteLineColored(yellow+plain+reset, plain)
 				bruteCount++
 			}
 			mu.Unlock()
 		}
-		writeLine(fmt.Sprintf("\n  -> %d new subdomains from brute force", bruteCount))
-
-		// Summary
-		writeLine(fmt.Sprintf("\n[*] Done. Found %d unique subdomains total.\n", len(found)))
-		if subOutput != "" {
-			fmt.Printf("[*] Results saved to: %s\n\n", subOutput)
-		}
+		WriteLine(fmt.Sprintf("\n  -> %d new subdomains from brute force", bruteCount))
+		WriteLine(fmt.Sprintf("\n[*] Done. Found %d unique subdomains total.\n", len(found)))
 	},
 }
 
 func init() {
 	subCmd.Flags().StringVarP(&subDomain, "domain", "d", "", "Target domain (e.g. example.com)")
-	subCmd.Flags().StringVarP(&subOutput, "output", "o", "", "Save results to file")
 	subCmd.Flags().StringVarP(&subWordlist, "wordlist", "w", "", "Custom wordlist file")
 	rootCmd.AddCommand(subCmd)
 }
