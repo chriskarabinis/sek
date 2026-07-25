@@ -550,7 +550,7 @@ sudo sek uninstall
 ## Requirements
 
 - macOS or Linux
-- Go 1.21+ (only if installing via `go install` or building from source)
+- Go 1.24+ (only if installing via `go install` or building from source)
 
 ---
 

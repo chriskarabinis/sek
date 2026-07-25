@@ -15,10 +15,10 @@ import (
 )
 
 // flags
-var scanTarget     string
-var scanPorts      string
-var scanTimeout    int
-var scanAll        bool
+var scanTarget string
+var scanPorts string
+var scanTimeout int
+var scanAll bool
 var scanShowFilter bool
 
 type scanResult struct {

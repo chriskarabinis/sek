@@ -11,9 +11,9 @@ import (
 )
 
 // flags
-var dnsDomain  string
-var dnsType    string
-var dnsServer  string
+var dnsDomain string
+var dnsType string
+var dnsServer string
 var dnsReverse string
 
 // dnsRecord holds a single DNS record with its TTL

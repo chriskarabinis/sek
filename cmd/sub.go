@@ -15,8 +15,8 @@ import (
 )
 
 // flags
-var subDomain    string
-var subWordlist  string
+var subDomain string
+var subWordlist string
 
 // built-in wordlist
 var wordlist = []string{

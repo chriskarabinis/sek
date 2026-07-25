@@ -12,10 +12,10 @@ import (
 )
 
 // flags
-var certDomain   string
-var certPort     string
+var certDomain string
+var certPort string
 var certInsecure bool
-var certChain    bool
+var certChain bool
 
 // tlsVersionName converts TLS version uint16 to readable string
 func tlsVersionName(v uint16) string {

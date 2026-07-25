@@ -15,7 +15,7 @@ import (
 
 // flags
 var tfTarget string
-var tfHTTP   bool
+var tfHTTP bool
 
 type tfSignature struct {
 	name      string
