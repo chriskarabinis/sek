@@ -1,0 +1,130 @@
+package scanx
+
+// services maps well-known port numbers to service names.
+var services = map[int]string{
+	21:    "FTP",
+	22:    "SSH",
+	23:    "Telnet",
+	25:    "SMTP",
+	53:    "DNS",
+	69:    "TFTP",
+	80:    "HTTP",
+	110:   "POP3",
+	111:   "RPC",
+	135:   "MSRPC",
+	139:   "NetBIOS",
+	143:   "IMAP",
+	161:   "SNMP",
+	389:   "LDAP",
+	443:   "HTTPS",
+	445:   "SMB",
+	465:   "SMTPS",
+	587:   "SMTP",
+	636:   "LDAPS",
+	993:   "IMAPS",
+	995:   "POP3S",
+	1080:  "SOCKS",
+	1194:  "OpenVPN",
+	1433:  "MSSQL",
+	1521:  "Oracle DB",
+	1723:  "PPTP",
+	2049:  "NFS",
+	2082:  "cPanel HTTP",
+	2083:  "cPanel HTTPS",
+	2086:  "WHM HTTP",
+	2087:  "WHM HTTPS",
+	2181:  "ZooKeeper",
+	2222:  "SSH-alt",
+	2375:  "Docker HTTP",
+	2376:  "Docker HTTPS",
+	3000:  "HTTP-alt",
+	3306:  "MySQL",
+	3389:  "RDP",
+	3690:  "SVN",
+	4443:  "HTTPS-alt",
+	4444:  "Metasploit",
+	4848:  "GlassFish",
+	5000:  "HTTP-alt",
+	5432:  "PostgreSQL",
+	5900:  "VNC",
+	5985:  "WinRM HTTP",
+	5986:  "WinRM HTTPS",
+	6379:  "Redis",
+	6443:  "Kubernetes API",
+	7001:  "WebLogic",
+	7080:  "HTTP-alt",
+	7443:  "HTTPS-alt",
+	8000:  "HTTP-alt",
+	8008:  "HTTP-alt",
+	8080:  "HTTP-alt",
+	8081:  "HTTP-alt",
+	8082:  "HTTP-alt",
+	8083:  "HTTP-alt",
+	8085:  "HTTP-alt",
+	8086:  "HTTP-alt",
+	8088:  "HTTP-alt",
+	8090:  "HTTP-alt",
+	8180:  "HTTP-alt",
+	8181:  "HTTP-alt",
+	8200:  "Vault HTTP",
+	8443:  "HTTPS-alt",
+	8444:  "HTTPS-alt",
+	8500:  "Consul HTTP",
+	8800:  "HTTP-alt",
+	8880:  "HTTP-alt",
+	8888:  "HTTP-alt",
+	8983:  "Solr",
+	9000:  "HTTP-alt",
+	9001:  "HTTP-alt",
+	9090:  "HTTP-alt",
+	9091:  "HTTP-alt",
+	9200:  "Elasticsearch",
+	9300:  "Elasticsearch",
+	9418:  "Git",
+	9443:  "HTTPS-alt",
+	9999:  "HTTP-alt",
+	10000: "Webmin",
+	27017: "MongoDB",
+	27018: "MongoDB",
+	50000: "IBM DB2",
+}
+
+// ServiceName returns the well-known service for a port, or "unknown".
+func ServiceName(port int) string {
+	if s, ok := services[port]; ok {
+		return s
+	}
+	return "unknown"
+}
+
+// tlsPorts are probed for a banner over TLS.
+var tlsPorts = map[int]bool{
+	443: true, 2083: true, 2087: true, 2096: true,
+	4443: true, 5986: true, 6443: true, 7443: true,
+	8443: true, 8444: true, 9443: true,
+}
+
+// httpPorts are probed for a banner with a plaintext HTTP request.
+var httpPorts = map[int]bool{
+	80: true, 81: true, 2082: true, 2086: true, 2095: true,
+	3000: true, 4848: true, 5000: true, 7001: true, 7080: true,
+	8000: true, 8008: true, 8080: true, 8081: true, 8082: true,
+	8083: true, 8085: true, 8086: true, 8088: true, 8090: true,
+	8180: true, 8181: true, 8200: true, 8500: true, 8800: true,
+	8880: true, 8888: true, 8983: true, 9000: true, 9001: true,
+	9090: true, 9091: true, 9200: true, 9999: true, 10000: true,
+}
+
+// DefaultPorts is the security-relevant set scanned when none are given,
+// roughly matching nmap's top ports.
+var DefaultPorts = []int{
+	21, 22, 23, 25, 53, 80, 81, 110, 111, 135, 139, 143, 389,
+	443, 445, 465, 587, 636, 993, 995, 1080, 1194, 1433, 1521,
+	1723, 2049, 2082, 2083, 2086, 2087, 2181, 2222,
+	2375, 2376, 3000, 3306, 3389, 3690, 4443, 4444, 4848, 5000,
+	5432, 5900, 5985, 5986, 6379, 6443, 7001, 7080, 7443, 8000,
+	8008, 8080, 8081, 8082, 8083, 8085, 8086, 8088, 8090, 8180,
+	8181, 8200, 8443, 8444, 8500, 8800, 8880, 8888, 8983, 9000,
+	9001, 9090, 9091, 9200, 9300, 9418, 9443, 9999, 10000, 27017,
+	27018, 50000,
+}

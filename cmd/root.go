@@ -1,18 +1,18 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"regexp"
 	"runtime/debug"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
-)
 
-const (
-	yellow = "\033[93m"
-	reset  = "\033[0m"
+	"github.com/chriskarabinis/sek/internal/output"
 )
 
 // fallbackVersion is what a plain `go build` reports. Release builds overwrite
@@ -41,84 +41,43 @@ func resolveVersion() string {
 	return fallbackVersion
 }
 
-// Global flags available to all commands
+// Global flags available to all commands.
 var (
 	globalOutput  string
 	globalNoColor bool
-	outFile       *os.File
+	globalFormat  string
 )
 
-// isColorEnabled returns true if colors should be used.
-// Colors are disabled when --no-color is set or output is piped (not a terminal).
-func isColorEnabled() bool {
-	if globalNoColor {
-		return false
-	}
-	stat, err := os.Stdout.Stat()
+// newWriter builds the output writer from the global flags. Callers must Close
+// it, which is what flushes and closes any -o file.
+func newWriter() (*output.Writer, error) {
+	format, err := output.ParseFormat(globalFormat)
 	if err != nil {
-		return false
+		return nil, err
 	}
-	return (stat.Mode() & os.ModeCharDevice) != 0
+	return output.New(output.Options{
+		OutputFile: globalOutput,
+		NoColor:    globalNoColor,
+		Format:     format,
+	})
 }
 
-// Col wraps text in yellow if colors are enabled, otherwise returns plain text
-func Col(s string) string {
-	if !isColorEnabled() {
-		return s
-	}
-	return yellow + s + reset
-}
-
-// InitOutput opens the output file if -o was specified. Call at start of each command.
-func InitOutput() {
-	if globalOutput == "" {
-		return
-	}
-	f, err := os.Create(globalOutput)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[!] Cannot create output file: %s\n", err)
-		os.Exit(1)
-	}
-	outFile = f
-}
-
-// CloseOutput closes the output file. Call via defer after InitOutput.
-func CloseOutput() {
-	if outFile != nil {
-		outFile.Close()
-		outFile = nil
-	}
-}
-
-// WriteLine writes plain text to stdout and to the output file if -o is set
-func WriteLine(line string) {
-	fmt.Println(line)
-	if outFile != nil {
-		outFile.WriteString(line + "\n")
-	}
-}
-
-// WriteLineColored writes colored text to stdout and plain text to file
-func WriteLineColored(colored, plain string) {
-	if isColorEnabled() {
-		fmt.Println(colored)
-	} else {
-		fmt.Println(plain)
-	}
-	if outFile != nil {
-		outFile.WriteString(plain + "\n")
-	}
+// commandContext returns a context cancelled on interrupt, so a long scan stops
+// on Ctrl+C instead of being killed mid-render with the output file half
+// written.
+func commandContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
 // banner is built at startup rather than at package-var init so it picks up
 // the version resolved from ldflags or build info.
 func banner() string {
-	return yellow + `
+	return "\033[93m" + `
  ___  ___  _  __
 / __|| __|| |/ /
 \__ \| _| | ' <
 |___/|___||_|\_\
-` + reset + `
+` + "\033[0m" + `
 Cloud CLI Kit — by Chris Karabinis
 Version ` + version + `
 
@@ -137,8 +96,10 @@ Available commands:
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "sek",
-	Short: "sek — Cloud CLI Kit",
+	Use:           "sek",
+	Short:         "sek — Cloud CLI Kit",
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()
 	},
@@ -152,9 +113,11 @@ var versionCmd = &cobra.Command{
 	},
 }
 
+// Execute runs the CLI, reporting errors on stderr with a non-zero exit code so
+// the tool composes properly in scripts.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "[!] %s\n", err)
 		os.Exit(1)
 	}
 }
@@ -164,5 +127,6 @@ func init() {
 	rootCmd.Long = banner()
 	rootCmd.PersistentFlags().StringVarP(&globalOutput, "output", "o", "", "Save results to file (e.g. -o results.txt)")
 	rootCmd.PersistentFlags().BoolVar(&globalNoColor, "no-color", false, "Disable colored output")
+	rootCmd.PersistentFlags().StringVarP(&globalFormat, "format", "f", "text", "Output format: text or json")
 	rootCmd.AddCommand(versionCmd)
 }
