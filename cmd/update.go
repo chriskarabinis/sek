@@ -1,12 +1,17 @@
 package cmd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -14,8 +19,16 @@ import (
 const repoAPI = "https://api.github.com/repos/chriskarabinis/sek/releases/latest"
 const repoDownload = "https://github.com/chriskarabinis/sek/releases/download"
 
+// checksumsName is the file published alongside the binaries by the release
+// workflow, in `sha256sum` format.
+const checksumsName = "checksums.txt"
+
 type githubRelease struct {
 	TagName string `json:"tag_name"`
+}
+
+func httpClient() *http.Client {
+	return &http.Client{Timeout: 60 * time.Second}
 }
 
 // isNewer returns true if b is strictly newer than a (semver: "0.1.2" > "0.1.1")
@@ -39,11 +52,15 @@ func isNewer(current, latest string) bool {
 }
 
 func fetchLatestVersion() (string, error) {
-	resp, err := http.Get(repoAPI)
+	resp, err := httpClient().Get(repoAPI)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode)
+	}
 
 	var release githubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
@@ -52,19 +69,99 @@ func fetchLatestVersion() (string, error) {
 	if release.TagName == "" {
 		return "", fmt.Errorf("no releases found")
 	}
-	// Strip leading "v"
-	v := release.TagName
-	if len(v) > 0 && v[0] == 'v' {
-		v = v[1:]
+	return strings.TrimPrefix(release.TagName, "v"), nil
+}
+
+// fetchExpectedChecksum returns the published SHA-256 for one release asset.
+// Format is `sha256sum` output: "<hex>  <filename>" per line.
+func fetchExpectedChecksum(version, assetName string) (string, error) {
+	url := fmt.Sprintf("%s/v%s/%s", repoDownload, version, checksumsName)
+	resp, err := httpClient().Get(url)
+	if err != nil {
+		return "", err
 	}
-	return v, nil
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("no %s published for v%s (HTTP %d)", checksumsName, version, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return "", err
+	}
+
+	for _, line := range strings.Split(string(body), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && strings.TrimPrefix(fields[1], "*") == assetName {
+			return strings.ToLower(fields[0]), nil
+		}
+	}
+	return "", fmt.Errorf("%s has no entry for %s", checksumsName, assetName)
+}
+
+// downloadVerified writes the asset to a temp file next to dstDir and returns
+// its path. The file is kept only if its SHA-256 matches wantSum. Staging in
+// the destination directory keeps the later rename on one filesystem, so the
+// swap is atomic.
+func downloadVerified(url, dstDir, wantSum string) (string, error) {
+	resp, err := httpClient().Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
+	}
+
+	tmp, err := os.CreateTemp(dstDir, ".sek-update-*")
+	if err != nil {
+		return "", fmt.Errorf("cannot stage update in %s: %w", dstDir, err)
+	}
+	tmpName := tmp.Name()
+
+	sum := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(tmp, sum), resp.Body); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return "", err
+	}
+
+	if got := hex.EncodeToString(sum.Sum(nil)); got != wantSum {
+		os.Remove(tmpName)
+		return "", fmt.Errorf("checksum mismatch\n    expected %s\n    got      %s", wantSum, got)
+	}
+
+	if err := os.Chmod(tmpName, 0o755); err != nil {
+		os.Remove(tmpName)
+		return "", err
+	}
+	return tmpName, nil
+}
+
+// currentBinaryPath resolves the running executable, following symlinks so the
+// update replaces the real file rather than the link pointing at it.
+func currentBinaryPath() (string, error) {
+	execPath, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(execPath); err == nil {
+		return resolved, nil
+	}
+	return execPath, nil
 }
 
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update sek to the latest version",
 	Long:  `Check for a newer version and replace the current binary if one is available.`,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		plain := fmt.Sprintf("[*] Current version: v%s", version)
 		WriteLineColored(yellow+plain+reset, plain)
 
@@ -72,88 +169,54 @@ var updateCmd = &cobra.Command{
 
 		latest, err := fetchLatestVersion()
 		if err != nil {
-			WriteLine(fmt.Sprintf("[!] Could not check for updates: %s", err))
-			os.Exit(1)
+			return fmt.Errorf("could not check for updates: %w", err)
 		}
 
 		if !isNewer(version, latest) {
 			plain := fmt.Sprintf("[*] Already up to date (v%s)", version)
 			WriteLineColored(yellow+plain+reset, plain)
-			return
+			return nil
 		}
 
 		plain = fmt.Sprintf("[*] New version available: v%s — downloading...", latest)
 		WriteLineColored(yellow+plain+reset, plain)
 
-		// Build download URL for the current platform
-		goos := runtime.GOOS
-		goarch := runtime.GOARCH
-		binaryName := fmt.Sprintf("sek_%s_%s", goos, goarch)
-		url := fmt.Sprintf("%s/v%s/%s", repoDownload, latest, binaryName)
-
-		// Download binary
-		dlResp, err := http.Get(url)
+		execPath, err := currentBinaryPath()
 		if err != nil {
-			WriteLine(fmt.Sprintf("[!] Download failed: %s", err))
-			os.Exit(1)
-		}
-		defer dlResp.Body.Close()
-
-		if dlResp.StatusCode != 200 {
-			WriteLine(fmt.Sprintf("[!] Download failed: HTTP %d", dlResp.StatusCode))
-			os.Exit(1)
+			return fmt.Errorf("could not locate current binary: %w", err)
 		}
 
-		// Write to temp file
-		tmp, err := os.CreateTemp("", "sek-update-*")
+		assetName := fmt.Sprintf("sek_%s_%s", runtime.GOOS, runtime.GOARCH)
+
+		wantSum, err := fetchExpectedChecksum(latest, assetName)
 		if err != nil {
-			WriteLine(fmt.Sprintf("[!] %s", err))
-			os.Exit(1)
-		}
-		tmpName := tmp.Name()
-		defer os.Remove(tmpName)
-
-		if _, err := io.Copy(tmp, dlResp.Body); err != nil {
-			tmp.Close()
-			WriteLine(fmt.Sprintf("[!] %s", err))
-			os.Exit(1)
-		}
-		tmp.Close()
-
-		if err := os.Chmod(tmpName, 0755); err != nil {
-			WriteLine(fmt.Sprintf("[!] %s", err))
-			os.Exit(1)
+			return fmt.Errorf("cannot verify download: %w", err)
 		}
 
-		// Find current binary path
-		execPath, err := os.Executable()
+		url := fmt.Sprintf("%s/v%s/%s", repoDownload, latest, assetName)
+		tmpName, err := downloadVerified(url, filepath.Dir(execPath), wantSum)
 		if err != nil {
-			WriteLine(fmt.Sprintf("[!] Could not locate current binary: %s", err))
-			os.Exit(1)
+			if os.IsPermission(err) {
+				return fmt.Errorf("permission denied — try: sudo sek update")
+			}
+			return err
 		}
 
-		// Replace current binary (read + write to handle cross-device moves)
-		src, err := os.Open(tmpName)
-		if err != nil {
-			WriteLine(fmt.Sprintf("[!] %s", err))
-			os.Exit(1)
-		}
-		defer src.Close()
+		WriteLine("[*] Checksum verified.")
 
-		dst, err := os.OpenFile(execPath, os.O_WRONLY|os.O_TRUNC, 0755)
-		if err != nil {
-			WriteLine(fmt.Sprintf("[!] Permission denied — try: sudo sek update"))
-			os.Exit(1)
-		}
-		defer dst.Close()
-
-		if _, err := io.Copy(dst, src); err != nil {
-			WriteLine(fmt.Sprintf("[!] %s", err))
-			os.Exit(1)
+		// Replace in one step. Writing over the running binary in place would
+		// leave it truncated and unrunnable if the copy died halfway through.
+		if err := os.Rename(tmpName, execPath); err != nil {
+			os.Remove(tmpName)
+			if os.IsPermission(err) {
+				return fmt.Errorf("permission denied — try: sudo sek update")
+			}
+			return fmt.Errorf("could not replace %s: %w", execPath, err)
 		}
 
 		plain = fmt.Sprintf("[*] Updated to v%s", latest)
 		WriteLineColored(yellow+plain+reset, plain)
+		return nil
 	},
 }
 
