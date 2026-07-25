@@ -84,7 +84,35 @@ Available on all commands:
 | Flag | Description |
 |------|-------------|
 | `-o results.txt` | Save output to file |
-| `--no-color` | Disable colored output (auto-disabled when piping) |
+| `-f`, `--format` | Output format: `text` (default) or `json` |
+| `--no-color` | Disable colored output (auto-disabled when piping, and when `NO_COLOR` is set) |
+
+---
+
+## JSON Output
+
+Every command can emit its result as JSON instead of text, which makes `sek`
+composable with `jq` and anything else that reads a pipe.
+
+```bash
+sek dns -d example.com -f json | jq -r '.sections[].records[].value'
+sek scan -d example.com -f json | jq '.ports[] | select(.state == "open") | .port'
+sek headers -d example.com -f json | jq '.score, .rating'
+sek cert -d example.com -f json | jq -r '.days_left'
+```
+
+In JSON mode, progress messages are suppressed and warnings go to stderr, so
+stdout always holds exactly one JSON document. `-o` writes the same document to
+a file.
+
+Errors go to stderr and set a non-zero exit code, so failures are detectable in
+scripts:
+
+```bash
+if ! sek cert -d example.com --expiry-days 30 >/dev/null; then
+  echo "certificate needs renewing"
+fi
+```
 
 ---
 
@@ -106,6 +134,7 @@ sek sub -d <domain> [flags]
 |------|------|-------------|
 | `-d` | `--domain` | Target domain (required) |
 | `-w` | `--wordlist` | Custom wordlist file |
+|      | `--concurrency` | Parallel DNS lookups (default: 50) |
 
 ### Examples
 
@@ -113,6 +142,19 @@ sek sub -d <domain> [flags]
 sek sub -d example.com
 sek sub -d example.com -o results.txt
 sek sub -d example.com -w wordlist.txt
+sek sub -d example.com --concurrency 100
+```
+
+### Wildcard DNS
+
+Domains with a `*.example.com` record answer for every name, which would make
+brute force report every word in the list as a real subdomain. `sek sub` probes
+for a wildcard first and filters out hits that resolve only to the wildcard
+addresses, reporting how many it dropped:
+
+```
+[!] Wildcard DNS detected: *.example.com  ->  203.0.113.10
+    Brute-force hits resolving only to these addresses will be filtered.
 ```
 
 ### Output
@@ -235,6 +277,7 @@ sek cert -d <domain> [flags]
 | `-p` | Port (default: 443) |
 | `-c` | Show full certificate chain |
 | `--insecure` | Skip verification (for self-signed certs) |
+| `--expiry-days N` | Exit non-zero if the certificate expires within N days |
 
 ### Examples
 
@@ -242,6 +285,7 @@ sek cert -d <domain> [flags]
 sek cert -d example.com
 sek cert -d example.com -c
 sek cert -d example.com -p 8443
+sek cert -d example.com --expiry-days 30    # for cron / CI
 ```
 
 ### Output
@@ -256,6 +300,7 @@ sek cert -d example.com -p 8443
   Valid From    2026-01-01 00:00:00 UTC
   Valid To      2026-04-01 00:00:00 UTC
   Days Left     71 days  [OK]
+
   Serial        ABC123...
 
 [*] Subject Alternative Names (SANs)
@@ -267,7 +312,7 @@ sek cert -d example.com -p 8443
   Cipher        TLS_AES_128_GCM_SHA256
 ```
 
-Status labels: `[OK]` · `[EXPIRING SOON]` (≤30 days) · `[EXPIRED]`
+Status labels: `[OK]` · `[EXPIRING SOON]` (≤30 days) · `[CRITICAL]` (≤14 days) · `[EXPIRED]`
 
 ---
 
@@ -338,6 +383,7 @@ sek scan -d <domain or IP> [flags]
 | `-t` | Connection timeout in milliseconds (default: 2000) |
 | `--all` | Scan all 65535 ports |
 | `--filter` | Also show filtered (firewalled) ports |
+| `--concurrency` | Ports probed in parallel (default: 300) |
 
 ### Examples
 
@@ -347,7 +393,10 @@ sek scan -d example.com -p 22,80,443,3306
 sek scan -d example.com -p 1-1000
 sek scan -d example.com --all
 sek scan -d example.com --filter
+sek scan -d example.com --all --concurrency 500
 ```
+
+Works against IPv6 targets as well as IPv4 and hostnames.
 
 ### Output
 
@@ -418,12 +467,36 @@ sek headers -d example.com --all
   X-Content-Type-Options             PRESENT   nosniff
   Referrer-Policy                    PRESENT   strict-origin-when-cross-origin
   Permissions-Policy                 MISSING   -
-  X-XSS-Protection                   PRESENT   1; mode=block
 
-[*] Score: 5/7 — Good
+[*] Score: 8/11 — Good
+
+[*] Deprecated Headers
+  X-XSS-Protection                   DEPRECATED 1; mode=block
 ```
 
-Score labels: `Excellent` (7/7) · `Good` (≥5) · `Fair` (≥3) · `Poor` (<3)
+### Scoring
+
+The score is weighted rather than a plain count, because the headers do not
+matter equally:
+
+| Header | Points |
+|--------|--------|
+| `Content-Security-Policy` | 3 |
+| `Strict-Transport-Security` | 3 |
+| `X-Frame-Options` | 2 |
+| `X-Content-Type-Options` | 1 |
+| `Referrer-Policy` | 1 |
+| `Permissions-Policy` | 1 |
+
+Ratings: `Excellent` (11/11) · `Good` (≥70%) · `Fair` (≥40%) · `Poor` (<40%)
+
+`X-XSS-Protection` is **not** scored. The legacy XSS auditor it enables
+introduced injection vectors of its own and has been removed from current
+browsers, so the guidance is to drop the header or send `0`. `sek` reports it as
+deprecated when present rather than rewarding its absence.
+
+Redirects are followed, so when the response comes from a different URL than the
+one requested, that URL is shown as `Redirected To`.
 
 ---
 
@@ -480,12 +553,14 @@ sek tf -d <domain> [flags]
 |------|-------------|
 | `-d` | Target domain (required) |
 | `--http` | Use HTTP instead of HTTPS |
+| `-p` | Custom port |
 
 ### Examples
 
 ```bash
 sek tf -d example.com
 sek tf -d example.com --http
+sek tf -d example.com -p 8080
 ```
 
 ### Output
@@ -511,7 +586,11 @@ sek tf -d example.com --http
   Cloudflare
 ```
 
-Detects: web servers, languages (PHP, ASP.NET, Node.js, Java), CMS (WordPress, Joomla, Drupal, Shopify...), JS frameworks (React, Vue, Next.js, Angular...), analytics, and CDN/security layers.
+Detects: web servers, languages (PHP, ASP.NET, Node.js, Java), CMS (WordPress, Joomla, Drupal, Shopify...), JS frameworks (React, Vue, Next.js, Angular...), analytics, and CDN/security layers. Versions are reported where the response reveals them, e.g. `nginx 1.18.0`.
+
+Markup signatures match asset references (`jquery.min.js`, `/jquery-`) rather
+than bare product names, so an article that merely mentions a library is not
+reported as using it.
 
 ---
 
@@ -523,7 +602,9 @@ Update sek to the latest version. Detects your OS and architecture automatically
 sek update
 ```
 
-If permission is denied, run with sudo:
+The download is verified against the `checksums.txt` published with each
+release, and installed with an atomic replace, so an interrupted update leaves
+the existing binary intact. If permission is denied, run with sudo:
 
 ```bash
 sudo sek update
@@ -533,10 +614,12 @@ sudo sek update
 
 ## sek uninstall
 
-Remove sek from your system.
+Remove sek from your system. Shows the resolved path and asks for confirmation
+first, since the binary being run is not always the installed one.
 
 ```bash
 sek uninstall
+sek uninstall --yes    # skip the prompt
 ```
 
 If permission is denied, run with sudo:
@@ -551,6 +634,31 @@ sudo sek uninstall
 
 - macOS or Linux
 - Go 1.24+ (only if installing via `go install` or building from source)
+
+---
+
+## Development
+
+```bash
+go build ./...      # build
+go test ./...       # run the test suite
+go vet ./...        # static checks
+gofmt -l .          # formatting (should print nothing)
+```
+
+Layout: `cmd/` holds the cobra commands and does only flag parsing and
+rendering; `internal/` holds the logic, one package per capability
+(`dnsx`, `subx`, `certx`, `scanx`, `whoisx`, `webx`, `ipx`) plus `output` for
+rendering. Each returns typed results, which is what both the tests and the
+JSON output are built on.
+
+---
+
+## Responsible Use
+
+`sek` performs active reconnaissance — port scanning, DNS brute force and HTTP
+requests against a target. Use it only on systems you own or have explicit
+permission to test. Unauthorized scanning may be illegal in your jurisdiction.
 
 ---
 

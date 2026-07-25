@@ -12,6 +12,3 @@ coverage.*
 .DS_Store
 .idea/
 .vscode/
-
-# Local agent notes
-CLAUDE.md
