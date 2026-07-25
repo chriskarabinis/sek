@@ -113,6 +113,13 @@ func AllPorts() []int {
 	return ports
 }
 
+// hostPort builds a dialable address. It must go through net.JoinHostPort:
+// concatenating host and port directly produces "::1:443" for an IPv6 literal,
+// which never dials, so every port on an IPv6 target looked closed.
+func hostPort(host string, port int) string {
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
 // Resolve turns a hostname into an address, preferring IPv4.
 func Resolve(target string) (string, error) {
 	if net.ParseIP(target) != nil {
@@ -198,7 +205,7 @@ dispatch:
 // probe connects to one port and classifies the outcome. A timeout means a
 // firewall is dropping packets; an outright refusal means nothing is listening.
 func probe(ctx context.Context, host string, port int, timeout time.Duration) Port {
-	address := net.JoinHostPort(host, strconv.Itoa(port))
+	address := hostPort(host, port)
 
 	dialer := &net.Dialer{Timeout: timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", address)
@@ -230,7 +237,7 @@ func asNetError(err error, target *net.Error) bool {
 // grabVersion asks an open port to identify itself: an HTTP request for web
 // ports, otherwise whatever banner the service volunteers on connect.
 func grabVersion(ctx context.Context, host string, port int, timeout time.Duration) string {
-	address := net.JoinHostPort(host, strconv.Itoa(port))
+	address := hostPort(host, port)
 
 	if tlsPorts[port] {
 		// SNI must be a hostname; sending an IP literal is invalid.

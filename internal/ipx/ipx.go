@@ -13,7 +13,8 @@ import (
 
 // endpoint is the free ip-api.com service (45 requests/min, no key). It offers
 // no HTTPS on the free tier, so lookups are visible to anything on the path.
-const endpoint = "http://ip-api.com/json/"
+// A var rather than a const so tests can point it at a local server.
+var endpoint = "http://ip-api.com/json/"
 
 // Result is the resolved network information for a target.
 type Result struct {
