@@ -20,6 +20,7 @@ var scanPorts string
 var scanTimeout int
 var scanAll bool
 var scanShowFilter bool
+var scanConcurrency int
 
 type scanResult struct {
 	port    int
@@ -183,13 +184,18 @@ func parsePorts(spec string) ([]int, error) {
 
 // grabVersion attempts to identify the service version running on an open port
 func grabVersion(host string, port int, timeout time.Duration) string {
-	address := fmt.Sprintf("%s:%d", host, port)
+	address := net.JoinHostPort(host, strconv.Itoa(port))
 
 	if tlsPortSet[port] {
+		// SNI must be a hostname — sending an IP literal is invalid, so omit it.
+		serverName := host
+		if net.ParseIP(host) != nil {
+			serverName = ""
+		}
 		conn, err := tls.DialWithDialer(
 			&net.Dialer{Timeout: timeout},
 			"tcp", address,
-			&tls.Config{InsecureSkipVerify: true, ServerName: host},
+			&tls.Config{InsecureSkipVerify: true, ServerName: serverName},
 		)
 		if err != nil {
 			return ""
@@ -240,7 +246,7 @@ func extractServerHeader(response string) string {
 
 // probePort performs a TCP connect scan and grabs a banner if open
 func probePort(host string, port int, timeout time.Duration) scanResult {
-	address := fmt.Sprintf("%s:%d", host, port)
+	address := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", address, timeout)
 
 	if err == nil {
@@ -315,24 +321,34 @@ var scanCmd = &cobra.Command{
 		WriteLineColored(yellow+header+reset, header)
 		WriteLine(fmt.Sprintf("[*] Scanning %d ports...\n", len(ports)))
 
-		// Concurrent scan
+		// Concurrent scan via a fixed worker pool. Spawning one goroutine per
+		// port would mean 65k parked goroutines on --all; workers pull instead.
 		results := make([]scanResult, len(ports))
-		concurrency := 300
-		if len(ports) < concurrency {
-			concurrency = len(ports)
+		workers := scanConcurrency
+		if workers < 1 {
+			workers = 1
 		}
-		sem := make(chan struct{}, concurrency)
+		if len(ports) < workers {
+			workers = len(ports)
+		}
+
+		type job struct{ idx, port int }
+		jobs := make(chan job)
 		var wg sync.WaitGroup
 
-		for i, port := range ports {
+		for w := 0; w < workers; w++ {
 			wg.Add(1)
-			go func(idx, p int) {
+			go func() {
 				defer wg.Done()
-				sem <- struct{}{}
-				results[idx] = probePort(ip, p, timeout)
-				<-sem
-			}(i, port)
+				for j := range jobs {
+					results[j.idx] = probePort(ip, j.port, timeout)
+				}
+			}()
 		}
+		for i, port := range ports {
+			jobs <- job{idx: i, port: port}
+		}
+		close(jobs)
 		wg.Wait()
 
 		// Sort by port number
@@ -411,5 +427,6 @@ func init() {
 	scanCmd.Flags().IntVarP(&scanTimeout, "timeout", "t", 2000, "Connection timeout in milliseconds")
 	scanCmd.Flags().BoolVar(&scanAll, "all", false, "Scan all 65535 ports")
 	scanCmd.Flags().BoolVar(&scanShowFilter, "filter", false, "Also show filtered (firewalled) ports")
+	scanCmd.Flags().IntVar(&scanConcurrency, "concurrency", 300, "Number of ports probed in parallel")
 	rootCmd.AddCommand(scanCmd)
 }

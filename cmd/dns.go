@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -8,7 +9,26 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/spf13/cobra"
+	"golang.org/x/net/publicsuffix"
 )
+
+// rcodeError reports a DNS response code other than NOERROR, so callers can
+// tell "this name does not exist" apart from "this name has no such records".
+type rcodeError struct{ rcode int }
+
+func (e *rcodeError) Error() string {
+	if s, ok := dns.RcodeToString[e.rcode]; ok {
+		return s
+	}
+	return fmt.Sprintf("RCODE %d", e.rcode)
+}
+
+// isNameError reports whether err is NXDOMAIN. Probe lookups (DKIM selectors,
+// wildcard tests) expect it and treat it as a plain negative, not a failure.
+func isNameError(err error) bool {
+	var re *rcodeError
+	return errors.As(err, &re) && re.rcode == dns.RcodeNameError
+}
 
 // flags
 var dnsDomain string
@@ -120,138 +140,165 @@ func dnsQuery(domain, server string, qtype uint16) ([]dns.RR, error) {
 	}
 
 	if r.Rcode != dns.RcodeSuccess {
-		return nil, nil
+		return nil, &rcodeError{rcode: r.Rcode}
 	}
 	return r.Answer, nil
 }
 
-func lookupA(domain, server string) []dnsRecord {
-	var records []dnsRecord
-	if rrs, _ := dnsQuery(domain, server, dns.TypeA); rrs != nil {
-		for _, rr := range rrs {
-			if a, ok := rr.(*dns.A); ok {
-				records = append(records, dnsRecord{"A", a.A.String(), a.Hdr.Ttl})
-			}
-		}
+// lookupTyped runs one query and maps each answer through fn, which reports
+// false for records of a type it does not handle.
+func lookupTyped(domain, server string, qtype uint16, fn func(dns.RR) (dnsRecord, bool)) ([]dnsRecord, error) {
+	rrs, err := dnsQuery(domain, server, qtype)
+	if err != nil {
+		return nil, err
 	}
-	if rrs, _ := dnsQuery(domain, server, dns.TypeAAAA); rrs != nil {
-		for _, rr := range rrs {
-			if aaaa, ok := rr.(*dns.AAAA); ok {
-				records = append(records, dnsRecord{"AAAA", aaaa.AAAA.String(), aaaa.Hdr.Ttl})
-			}
-		}
-	}
-	return records
-}
-
-func lookupMX(domain, server string) []dnsRecord {
-	rrs, _ := dnsQuery(domain, server, dns.TypeMX)
 	var records []dnsRecord
 	for _, rr := range rrs {
-		if mx, ok := rr.(*dns.MX); ok {
-			records = append(records, dnsRecord{
-				"MX",
-				fmt.Sprintf("%s (priority: %d)", strings.TrimSuffix(mx.Mx, "."), mx.Preference),
-				mx.Hdr.Ttl,
-			})
+		if rec, ok := fn(rr); ok {
+			records = append(records, rec)
 		}
 	}
-	return records
+	return records, nil
 }
 
-func lookupNS(domain, server string) []dnsRecord {
-	rrs, _ := dnsQuery(domain, server, dns.TypeNS)
-	var records []dnsRecord
-	for _, rr := range rrs {
-		if ns, ok := rr.(*dns.NS); ok {
-			records = append(records, dnsRecord{"NS", strings.TrimSuffix(ns.Ns, "."), ns.Hdr.Ttl})
+func lookupA(domain, server string) ([]dnsRecord, error) {
+	v4, errA := lookupTyped(domain, server, dns.TypeA, func(rr dns.RR) (dnsRecord, bool) {
+		a, ok := rr.(*dns.A)
+		if !ok {
+			return dnsRecord{}, false
+		}
+		return dnsRecord{"A", a.A.String(), a.Hdr.Ttl}, true
+	})
+	v6, errAAAA := lookupTyped(domain, server, dns.TypeAAAA, func(rr dns.RR) (dnsRecord, bool) {
+		aaaa, ok := rr.(*dns.AAAA)
+		if !ok {
+			return dnsRecord{}, false
+		}
+		return dnsRecord{"AAAA", aaaa.AAAA.String(), aaaa.Hdr.Ttl}, true
+	})
+
+	records := append(v4, v6...)
+	// A host with only one address family is normal, so report a failure
+	// only when neither query produced anything.
+	if len(records) == 0 {
+		if errA != nil {
+			return nil, errA
+		}
+		if errAAAA != nil {
+			return nil, errAAAA
 		}
 	}
-	return records
+	return records, nil
 }
 
-func lookupTXT(domain, server string) []dnsRecord {
-	rrs, _ := dnsQuery(domain, server, dns.TypeTXT)
-	var records []dnsRecord
-	for _, rr := range rrs {
-		if txt, ok := rr.(*dns.TXT); ok {
-			records = append(records, dnsRecord{"TXT", strings.Join(txt.Txt, ""), txt.Hdr.Ttl})
+func lookupMX(domain, server string) ([]dnsRecord, error) {
+	return lookupTyped(domain, server, dns.TypeMX, func(rr dns.RR) (dnsRecord, bool) {
+		mx, ok := rr.(*dns.MX)
+		if !ok {
+			return dnsRecord{}, false
 		}
-	}
-	return records
+		return dnsRecord{
+			"MX",
+			fmt.Sprintf("%s (priority: %d)", strings.TrimSuffix(mx.Mx, "."), mx.Preference),
+			mx.Hdr.Ttl,
+		}, true
+	})
 }
 
-func lookupCNAME(domain, server string) []dnsRecord {
-	rrs, _ := dnsQuery(domain, server, dns.TypeCNAME)
-	var records []dnsRecord
-	for _, rr := range rrs {
-		if cname, ok := rr.(*dns.CNAME); ok {
-			records = append(records, dnsRecord{"CNAME", strings.TrimSuffix(cname.Target, "."), cname.Hdr.Ttl})
+func lookupNS(domain, server string) ([]dnsRecord, error) {
+	return lookupTyped(domain, server, dns.TypeNS, func(rr dns.RR) (dnsRecord, bool) {
+		ns, ok := rr.(*dns.NS)
+		if !ok {
+			return dnsRecord{}, false
 		}
-	}
-	return records
+		return dnsRecord{"NS", strings.TrimSuffix(ns.Ns, "."), ns.Hdr.Ttl}, true
+	})
 }
 
-func lookupSOA(domain, server string) []dnsRecord {
-	rrs, _ := dnsQuery(domain, server, dns.TypeSOA)
-	var records []dnsRecord
-	for _, rr := range rrs {
-		if soa, ok := rr.(*dns.SOA); ok {
-			mbox := strings.TrimSuffix(soa.Mbox, ".")
-			parts := strings.SplitN(mbox, ".", 2)
-			email := mbox
-			if len(parts) == 2 {
-				email = parts[0] + "@" + parts[1]
-			}
-			value := fmt.Sprintf("primary: %s | admin: %s | serial: %d | refresh: %ds",
-				strings.TrimSuffix(soa.Ns, "."), email, soa.Serial, soa.Refresh)
-			records = append(records, dnsRecord{"SOA", value, soa.Hdr.Ttl})
+func lookupTXT(domain, server string) ([]dnsRecord, error) {
+	return lookupTyped(domain, server, dns.TypeTXT, func(rr dns.RR) (dnsRecord, bool) {
+		txt, ok := rr.(*dns.TXT)
+		if !ok {
+			return dnsRecord{}, false
 		}
-	}
-	return records
+		return dnsRecord{"TXT", strings.Join(txt.Txt, ""), txt.Hdr.Ttl}, true
+	})
 }
 
-func lookupCAA(domain, server string) []dnsRecord {
-	rrs, _ := dnsQuery(domain, server, dns.TypeCAA)
-	var records []dnsRecord
-	for _, rr := range rrs {
-		if caa, ok := rr.(*dns.CAA); ok {
-			records = append(records, dnsRecord{
-				"CAA",
-				fmt.Sprintf("%d %s \"%s\"", caa.Flag, caa.Tag, caa.Value),
-				caa.Hdr.Ttl,
-			})
+func lookupCNAME(domain, server string) ([]dnsRecord, error) {
+	return lookupTyped(domain, server, dns.TypeCNAME, func(rr dns.RR) (dnsRecord, bool) {
+		cname, ok := rr.(*dns.CNAME)
+		if !ok {
+			return dnsRecord{}, false
 		}
-	}
-	return records
+		return dnsRecord{"CNAME", strings.TrimSuffix(cname.Target, "."), cname.Hdr.Ttl}, true
+	})
 }
 
-// lookupEmailSecurity checks SPF, DMARC, and common DKIM selectors
-func lookupEmailSecurity(domain, server string) []dnsRecord {
+func lookupSOA(domain, server string) ([]dnsRecord, error) {
+	return lookupTyped(domain, server, dns.TypeSOA, func(rr dns.RR) (dnsRecord, bool) {
+		soa, ok := rr.(*dns.SOA)
+		if !ok {
+			return dnsRecord{}, false
+		}
+		mbox := strings.TrimSuffix(soa.Mbox, ".")
+		parts := strings.SplitN(mbox, ".", 2)
+		email := mbox
+		if len(parts) == 2 {
+			email = parts[0] + "@" + parts[1]
+		}
+		value := fmt.Sprintf("primary: %s | admin: %s | serial: %d | refresh: %ds",
+			strings.TrimSuffix(soa.Ns, "."), email, soa.Serial, soa.Refresh)
+		return dnsRecord{"SOA", value, soa.Hdr.Ttl}, true
+	})
+}
+
+func lookupCAA(domain, server string) ([]dnsRecord, error) {
+	return lookupTyped(domain, server, dns.TypeCAA, func(rr dns.RR) (dnsRecord, bool) {
+		caa, ok := rr.(*dns.CAA)
+		if !ok {
+			return dnsRecord{}, false
+		}
+		return dnsRecord{
+			"CAA",
+			fmt.Sprintf("%d %s \"%s\"", caa.Flag, caa.Tag, caa.Value),
+			caa.Hdr.Ttl,
+		}, true
+	})
+}
+
+// lookupEmailSecurity checks SPF, DMARC, and common DKIM selectors. It always
+// reports success: every lookup here is a probe whose absence is a valid answer.
+func lookupEmailSecurity(domain, server string) ([]dnsRecord, error) {
 	var records []dnsRecord
 
-	for _, txt := range lookupTXT(domain, server) {
+	spf, _ := lookupTXT(domain, server)
+	for _, txt := range spf {
 		if strings.HasPrefix(txt.value, "v=spf1") {
 			records = append(records, dnsRecord{"SPF", txt.value, txt.ttl})
 		}
 	}
 
-	for _, txt := range lookupTXT("_dmarc."+domain, server) {
+	dmarc, _ := lookupTXT("_dmarc."+domain, server)
+	for _, txt := range dmarc {
 		if strings.HasPrefix(txt.value, "v=DMARC1") {
 			records = append(records, dnsRecord{"DMARC", txt.value, txt.ttl})
 		}
 	}
 
+	// Selectors are guessed, so NXDOMAIN is the common case and errors are
+	// deliberately ignored here — a miss just means "no key at that name".
 	selectors := []string{"google", "default", "mail", "k1", "s1", "s2", "selector1", "selector2", "dkim", "smtp"}
 	for _, sel := range selectors {
-		for _, txt := range lookupTXT(sel+"._domainkey."+domain, server) {
+		keys, _ := lookupTXT(sel+"._domainkey."+domain, server)
+		for _, txt := range keys {
 			if strings.Contains(txt.value, "v=DKIM1") {
 				records = append(records, dnsRecord{"DKIM", fmt.Sprintf("[%s] %s", sel, txt.value), txt.ttl})
 			}
 		}
 	}
 
-	return records
+	return records, nil
 }
 
 // lookupReverse does a reverse DNS lookup (IP → hostname)
@@ -267,10 +314,13 @@ func lookupReverse(ip string) []dnsRecord {
 	return records
 }
 
-// detectWildcard checks if the domain has a wildcard DNS record
+// detectWildcard checks if the domain has a wildcard DNS record. NXDOMAIN is
+// the expected answer when there is none, so errors are not surfaced.
 func detectWildcard(domain, server string) string {
-	randomSub := "ck-wildcard-test-xr7z2." + domain
-	rrs, _ := dnsQuery(randomSub, server, dns.TypeA)
+	rrs, err := dnsQuery(randomLabel()+"."+domain, server, dns.TypeA)
+	if err != nil {
+		return ""
+	}
 	for _, rr := range rrs {
 		if a, ok := rr.(*dns.A); ok {
 			return a.A.String()
@@ -290,11 +340,17 @@ func printDNSRecords(records []dnsRecord) {
 	}
 }
 
-func printSection(title string, records []dnsRecord) {
+// printSection renders one record type. A failed query is reported as such
+// rather than as "no records" — NXDOMAIN, SERVFAIL and an unreachable resolver
+// used to be indistinguishable from a domain that simply has no such records.
+func printSection(title string, records []dnsRecord, err error) {
 	WriteLine(fmt.Sprintf("[*] %s", title))
-	if len(records) == 0 {
+	switch {
+	case err != nil:
+		WriteLine(fmt.Sprintf("  Query failed: %s", err))
+	case len(records) == 0:
 		WriteLine("  No records found.")
-	} else {
+	default:
 		printDNSRecords(records)
 	}
 	WriteLine("")
@@ -302,16 +358,21 @@ func printSection(title string, records []dnsRecord) {
 
 // --- Platform detection ---
 
+// getRootDomain returns the registrable domain, using the Public Suffix List
+// so multi-label suffixes resolve correctly: shop.example.co.uk yields
+// example.co.uk, not co.uk. Also covers .com.gr, .edu.gr and friends.
 func getRootDomain(domain string) string {
-	parts := strings.Split(domain, ".")
-	if len(parts) <= 2 {
-		return domain
+	d := strings.TrimSuffix(strings.ToLower(domain), ".")
+	root, err := publicsuffix.EffectiveTLDPlusOne(d)
+	if err != nil {
+		return d
 	}
-	return strings.Join(parts[len(parts)-2:], ".")
+	return root
 }
 
 func checkNS(domain, server string) string {
-	for _, r := range lookupNS(domain, server) {
+	ns, _ := lookupNS(domain, server)
+	for _, r := range ns {
 		host := strings.ToLower(r.value)
 		for _, p := range knownProviders {
 			if strings.Contains(host, p.keyword) {
@@ -332,7 +393,8 @@ func detectPlatform(domain, server string) string {
 			return p
 		}
 	}
-	for _, r := range lookupCNAME(domain, server) {
+	cnames, _ := lookupCNAME(domain, server)
+	for _, r := range cnames {
 		cname := strings.ToLower(r.value)
 		for _, p := range knownProviders {
 			if strings.Contains(cname, p.keyword) {
@@ -340,7 +402,8 @@ func detectPlatform(domain, server string) string {
 			}
 		}
 	}
-	for _, r := range lookupA(domain, server) {
+	addrs, _ := lookupA(domain, server)
+	for _, r := range addrs {
 		for _, p := range ipProviders {
 			if strings.HasPrefix(r.value, p.prefix) {
 				return p.provider
@@ -384,32 +447,38 @@ var dnsCmd = &cobra.Command{
 
 		recordType := strings.ToUpper(dnsType)
 
+		section := func(title string, lookup func(domain, server string) ([]dnsRecord, error)) {
+			records, err := lookup(dnsDomain, server)
+			printSection(title, records, err)
+		}
+		const emailTitle = "Email Security (SPF / DMARC / DKIM)"
+
 		switch recordType {
 		case "A":
-			printSection("A / AAAA", lookupA(dnsDomain, server))
+			section("A / AAAA", lookupA)
 		case "MX":
-			printSection("MX", lookupMX(dnsDomain, server))
+			section("MX", lookupMX)
 		case "NS":
-			printSection("NS", lookupNS(dnsDomain, server))
+			section("NS", lookupNS)
 		case "TXT":
-			printSection("TXT", lookupTXT(dnsDomain, server))
+			section("TXT", lookupTXT)
 		case "CNAME":
-			printSection("CNAME", lookupCNAME(dnsDomain, server))
+			section("CNAME", lookupCNAME)
 		case "SOA":
-			printSection("SOA", lookupSOA(dnsDomain, server))
+			section("SOA", lookupSOA)
 		case "CAA":
-			printSection("CAA", lookupCAA(dnsDomain, server))
+			section("CAA", lookupCAA)
 		case "EMAIL":
-			printSection("Email Security (SPF / DMARC / DKIM)", lookupEmailSecurity(dnsDomain, server))
+			section(emailTitle, lookupEmailSecurity)
 		default:
-			printSection("A / AAAA", lookupA(dnsDomain, server))
-			printSection("MX", lookupMX(dnsDomain, server))
-			printSection("NS", lookupNS(dnsDomain, server))
-			printSection("TXT", lookupTXT(dnsDomain, server))
-			printSection("CNAME", lookupCNAME(dnsDomain, server))
-			printSection("SOA", lookupSOA(dnsDomain, server))
-			printSection("CAA", lookupCAA(dnsDomain, server))
-			printSection("Email Security (SPF / DMARC / DKIM)", lookupEmailSecurity(dnsDomain, server))
+			section("A / AAAA", lookupA)
+			section("MX", lookupMX)
+			section("NS", lookupNS)
+			section("TXT", lookupTXT)
+			section("CNAME", lookupCNAME)
+			section("SOA", lookupSOA)
+			section("CAA", lookupCAA)
+			section(emailTitle, lookupEmailSecurity)
 
 			// Wildcard detection
 			WriteLine("[*] Wildcard DNS")

@@ -18,44 +18,66 @@ var headersPort string
 var headersAll bool
 
 type secHeader struct {
-	key string
-	fix string
+	key    string
+	weight int
+	fix    string
 }
 
-// securityHeaders lists the headers checked with a recommended value to add if missing
+// securityHeaders lists the headers that count toward the score, with the value
+// to add when missing. Weights reflect impact: a missing Content-Security-Policy
+// is not equivalent to a missing Permissions-Policy, which flat scoring implied.
 var securityHeaders = []secHeader{
 	{
-		"Strict-Transport-Security",
-		"Strict-Transport-Security: max-age=31536000; includeSubDomains",
-	},
-	{
-		"Content-Security-Policy",
+		"Content-Security-Policy", 3,
 		"Content-Security-Policy: default-src 'self'",
 	},
 	{
-		"X-Frame-Options",
+		"Strict-Transport-Security", 3,
+		"Strict-Transport-Security: max-age=31536000; includeSubDomains",
+	},
+	{
+		"X-Frame-Options", 2,
 		"X-Frame-Options: SAMEORIGIN",
 	},
 	{
-		"X-Content-Type-Options",
+		"X-Content-Type-Options", 1,
 		"X-Content-Type-Options: nosniff",
 	},
 	{
-		"Referrer-Policy",
+		"Referrer-Policy", 1,
 		"Referrer-Policy: strict-origin-when-cross-origin",
 	},
 	{
-		"Permissions-Policy",
+		"Permissions-Policy", 1,
 		"Permissions-Policy: camera=(), microphone=(), geolocation=()",
-	},
-	{
-		"X-XSS-Protection",
-		"X-XSS-Protection: 1; mode=block",
 	},
 }
 
-func scoreLabel(present, total int) string {
-	ratio := float64(present) / float64(total)
+// deprecatedHeaders are headers whose presence is itself the finding.
+// X-XSS-Protection switched on the legacy XSS auditor, which introduced
+// injection vectors of its own and has been removed from every current
+// browser. Current guidance (OWASP, MDN) is to drop it or send 0 — so it is
+// reported as a problem when present, not rewarded when absent.
+var deprecatedHeaders = []secHeader{
+	{
+		"X-XSS-Protection", 0,
+		"Remove the header, or send: X-XSS-Protection: 0",
+	},
+}
+
+func maxScore() int {
+	total := 0
+	for _, sh := range securityHeaders {
+		total += sh.weight
+	}
+	return total
+}
+
+func scoreLabel(earned, total int) string {
+	if total == 0 {
+		return "Unknown"
+	}
+	ratio := float64(earned) / float64(total)
 	switch {
 	case ratio == 1.0:
 		return "Excellent"
@@ -108,12 +130,24 @@ var headersCmd = &cobra.Command{
 		}
 		defer resp.Body.Close()
 
+		// Redirects are followed by default, so the headers reported below can
+		// belong to a different origin than the one asked for. Say so instead
+		// of silently attributing them to the requested host.
+		finalURL := url
+		if resp.Request != nil && resp.Request.URL != nil {
+			finalURL = resp.Request.URL.String()
+		}
+
 		// Response info
 		WriteLine("[*] Response")
-		infoFields := []struct{ label, value string }{
+		type infoField struct{ label, value string }
+		infoFields := []infoField{
 			{"Status", resp.Status},
 			{"Server", resp.Header.Get("Server")},
 			{"Content-Type", resp.Header.Get("Content-Type")},
+		}
+		if finalURL != url {
+			infoFields = append(infoFields, infoField{"Redirected To", finalURL})
 		}
 		for _, f := range infoFields {
 			val := f.value
@@ -131,7 +165,7 @@ var headersCmd = &cobra.Command{
 		WriteLineColored(yellow+plain+reset, plain)
 		WriteLine("  " + strings.Repeat("-", 80))
 
-		present := 0
+		earned := 0
 		var missing []secHeader
 		for _, sh := range securityHeaders {
 			val := resp.Header.Get(sh.key)
@@ -140,7 +174,7 @@ var headersCmd = &cobra.Command{
 			if val != "" {
 				state = "PRESENT"
 				display = val
-				present++
+				earned += sh.weight
 			} else {
 				missing = append(missing, sh)
 			}
@@ -153,18 +187,37 @@ var headersCmd = &cobra.Command{
 		}
 		WriteLine("")
 
-		label := scoreLabel(present, len(securityHeaders))
-		score := fmt.Sprintf("[*] Score: %d/%d — %s", present, len(securityHeaders), label)
+		total := maxScore()
+		label := scoreLabel(earned, total)
+		score := fmt.Sprintf("[*] Score: %d/%d — %s", earned, total, label)
 		WriteLineColored(yellow+score+reset, score)
 		WriteLine("")
 
-		// Recommendations for missing headers
-		if len(missing) > 0 {
+		// Headers that should not be there at all
+		var deprecated []secHeader
+		for _, sh := range deprecatedHeaders {
+			if val := resp.Header.Get(sh.key); val != "" {
+				deprecated = append(deprecated, sh)
+				plain := fmt.Sprintf("  %-34s %-9s %s", sh.key, "DEPRECATED", val)
+				WriteLineColored(yellow+plain+reset, plain)
+			}
+		}
+		if len(deprecated) > 0 {
+			WriteLine("")
+		}
+
+		// Recommendations
+		if len(missing) > 0 || len(deprecated) > 0 {
 			WriteLine("[*] Recommendations")
 			for _, sh := range missing {
-				plain := fmt.Sprintf("  Add to your server config:")
+				WriteLine("  Add to your server config:")
+				plain := fmt.Sprintf("  %s", sh.fix)
 				WriteLineColored(yellow+plain+reset, plain)
-				plain = fmt.Sprintf("  %s", sh.fix)
+				WriteLine("")
+			}
+			for _, sh := range deprecated {
+				WriteLine(fmt.Sprintf("  %s is deprecated and should not be sent:", sh.key))
+				plain := fmt.Sprintf("  %s", sh.fix)
 				WriteLineColored(yellow+plain+reset, plain)
 				WriteLine("")
 			}
