@@ -1,34 +1,54 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
 
+var uninstallYes bool
+
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Remove sek from your system",
-	Long:  `Delete the sek binary from /usr/local/bin.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		execPath, err := os.Executable()
+	Long:  `Delete the sek binary from disk.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		execPath, err := currentBinaryPath()
 		if err != nil {
-			WriteLine(fmt.Sprintf("[!] Could not locate binary: %s", err))
-			os.Exit(1)
+			return fmt.Errorf("could not locate binary: %w", err)
 		}
 
-		WriteLine(fmt.Sprintf("[*] Removing: %s", execPath))
+		// This deletes whatever binary is running, which is not always the
+		// installed one — a ./sek built in a working copy is a real
+		// possibility. Show the path and confirm before removing it.
+		plain := fmt.Sprintf("[*] This will delete: %s", execPath)
+		WriteLineColored(yellow+plain+reset, plain)
+
+		if !uninstallYes {
+			fmt.Print("[?] Continue? [y/N]: ")
+			answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+			if !strings.EqualFold(strings.TrimSpace(answer), "y") {
+				WriteLine("[*] Aborted.")
+				return nil
+			}
+		}
 
 		if err := os.Remove(execPath); err != nil {
-			WriteLine("[!] Permission denied — try: sudo sek uninstall")
-			os.Exit(1)
+			if os.IsPermission(err) {
+				return fmt.Errorf("permission denied — try: sudo sek uninstall")
+			}
+			return err
 		}
 
 		WriteLine("[*] sek has been removed.")
+		return nil
 	},
 }
 
 func init() {
+	uninstallCmd.Flags().BoolVarP(&uninstallYes, "yes", "y", false, "Skip the confirmation prompt")
 	rootCmd.AddCommand(uninstallCmd)
 }

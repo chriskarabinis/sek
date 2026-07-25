@@ -21,10 +21,15 @@ jobs:
 
       - name: Build all platforms
         run: |
-          GOOS=darwin  GOARCH=amd64 go build -ldflags="-s -w" -o sek_darwin_amd64  .
-          GOOS=darwin  GOARCH=arm64 go build -ldflags="-s -w" -o sek_darwin_arm64  .
-          GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w" -o sek_linux_amd64   .
-          GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w" -o sek_linux_arm64   .
+          version="${GITHUB_REF_NAME#v}"
+          ldflags="-s -w -X github.com/chriskarabinis/sek/cmd.version=${version}"
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+            goos="${target%/*}"; goarch="${target#*/}"
+            GOOS="$goos" GOARCH="$goarch" go build -ldflags="$ldflags" -o "sek_${goos}_${goarch}" .
+          done
+
+      - name: Generate checksums
+        run: sha256sum sek_* > checksums.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -34,4 +39,5 @@ jobs:
             sek_darwin_arm64
             sek_linux_amd64
             sek_linux_arm64
+            checksums.txt
           generate_release_notes: true

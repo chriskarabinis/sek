@@ -3,15 +3,43 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"regexp"
+	"runtime/debug"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
 
 const (
-	yellow  = "\033[93m"
-	reset   = "\033[0m"
-	version = "0.1.6"
+	yellow = "\033[93m"
+	reset  = "\033[0m"
 )
+
+// fallbackVersion is what a plain `go build` reports. Release builds overwrite
+// `version` at link time; `go install module@vX` picks the tag up from the
+// embedded build info instead. It must stay a plain string literal for the
+// linker's -X to apply.
+const fallbackVersion = "0.1.6"
+
+var version = fallbackVersion
+
+// releaseTag matches a clean release version such as "v0.1.7". The
+// pseudo-versions Go synthesises for a build inside a work tree
+// ("v0.0.0-20260725164926-23e2cfa54d6e+dirty") deliberately do not match, so
+// a local `go build` keeps reporting the compiled-in value.
+var releaseTag = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
+
+// resolveVersion prefers a version stamped in by -ldflags, then the tag
+// recorded by `go install module@vX.Y.Z`, and finally the compiled-in fallback.
+func resolveVersion() string {
+	if version != fallbackVersion {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && releaseTag.MatchString(info.Main.Version) {
+		return strings.TrimPrefix(info.Main.Version, "v")
+	}
+	return fallbackVersion
+}
 
 // Global flags available to all commands
 var (
@@ -82,10 +110,10 @@ func WriteLineColored(colored, plain string) {
 	}
 }
 
-var rootCmd = &cobra.Command{
-	Use:   "sek",
-	Short: "sek — Cloud CLI Kit",
-	Long: yellow + `
+// banner is built at startup rather than at package-var init so it picks up
+// the version resolved from ldflags or build info.
+func banner() string {
+	return yellow + `
  ___  ___  _  __
 / __|| __|| |/ /
 \__ \| _| | ' <
@@ -105,7 +133,12 @@ Available commands:
   sek tf       — Technology fingerprinting
   sek update     — Update to the latest version
   sek uninstall  — Remove sek from your system
-  sek version    — Show current version`,
+  sek version    — Show current version`
+}
+
+var rootCmd = &cobra.Command{
+	Use:   "sek",
+	Short: "sek — Cloud CLI Kit",
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()
 	},
@@ -127,6 +160,8 @@ func Execute() {
 }
 
 func init() {
+	version = resolveVersion()
+	rootCmd.Long = banner()
 	rootCmd.PersistentFlags().StringVarP(&globalOutput, "output", "o", "", "Save results to file (e.g. -o results.txt)")
 	rootCmd.PersistentFlags().BoolVar(&globalNoColor, "no-color", false, "Disable colored output")
 	rootCmd.AddCommand(versionCmd)
