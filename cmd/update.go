@@ -162,10 +162,14 @@ var updateCmd = &cobra.Command{
 	Short: "Update sek to the latest version",
 	Long:  `Check for a newer version and replace the current binary if one is available.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		plain := fmt.Sprintf("[*] Current version: v%s", version)
-		WriteLineColored(yellow+plain+reset, plain)
+		w, err := newWriter()
+		if err != nil {
+			return err
+		}
+		defer w.Close()
 
-		WriteLine("[*] Checking for updates...")
+		w.Highlightf("[*] Current version: v%s", version)
+		w.Section("Checking for updates...")
 
 		latest, err := fetchLatestVersion()
 		if err != nil {
@@ -173,13 +177,11 @@ var updateCmd = &cobra.Command{
 		}
 
 		if !isNewer(version, latest) {
-			plain := fmt.Sprintf("[*] Already up to date (v%s)", version)
-			WriteLineColored(yellow+plain+reset, plain)
+			w.Highlightf("[*] Already up to date (v%s)", version)
 			return nil
 		}
 
-		plain = fmt.Sprintf("[*] New version available: v%s — downloading...", latest)
-		WriteLineColored(yellow+plain+reset, plain)
+		w.Highlightf("[*] New version available: v%s — downloading...", latest)
 
 		execPath, err := currentBinaryPath()
 		if err != nil {
@@ -202,7 +204,7 @@ var updateCmd = &cobra.Command{
 			return err
 		}
 
-		WriteLine("[*] Checksum verified.")
+		w.Section("Checksum verified.")
 
 		// Replace in one step. Writing over the running binary in place would
 		// leave it truncated and unrunnable if the copy died halfway through.
@@ -214,8 +216,7 @@ var updateCmd = &cobra.Command{
 			return fmt.Errorf("could not replace %s: %w", execPath, err)
 		}
 
-		plain = fmt.Sprintf("[*] Updated to v%s", latest)
-		WriteLineColored(yellow+plain+reset, plain)
+		w.Highlightf("[*] Updated to v%s", latest)
 		return nil
 	},
 }
