@@ -2,13 +2,17 @@ package cmd
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -17,6 +21,7 @@ import (
 // flags
 var subDomain string
 var subWordlist string
+var subConcurrency int
 
 // built-in wordlist
 var wordlist = []string{
@@ -89,6 +94,47 @@ type findResult struct {
 	ips  []string
 }
 
+// randomLabel returns a random DNS label, used to probe for wildcard records.
+func randomLabel() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "zzq7x2mk9v"
+	}
+	return "sek-" + hex.EncodeToString(b)
+}
+
+// detectWildcardIPs probes random subdomains to find out whether the domain
+// answers for anything. If it does, the returned set holds the addresses the
+// wildcard resolves to, so brute-force hits pointing only there can be dropped.
+// A nil result means there is no wildcard.
+func detectWildcardIPs(domain string) map[string]bool {
+	wildcard := make(map[string]bool)
+	for i := 0; i < 3; i++ {
+		ips, err := net.LookupHost(randomLabel() + "." + domain)
+		if err != nil || len(ips) == 0 {
+			return nil
+		}
+		for _, ip := range ips {
+			wildcard[ip] = true
+		}
+	}
+	return wildcard
+}
+
+// isWildcardHit reports whether every address for a host belongs to the
+// wildcard set. A host with even one address outside it is a real find.
+func isWildcardHit(ips []string, wildcard map[string]bool) bool {
+	if len(wildcard) == 0 || len(ips) == 0 {
+		return false
+	}
+	for _, ip := range ips {
+		if !wildcard[ip] {
+			return false
+		}
+	}
+	return true
+}
+
 type crtEntry struct {
 	NameValue string `json:"name_value"`
 }
@@ -132,13 +178,54 @@ func subLookupIPs(host string) []string {
 	return ips
 }
 
-func checkSubdomain(sub, domain string, wg *sync.WaitGroup, results chan<- findResult) {
-	defer wg.Done()
-	host := sub + "." + domain
-	ips, err := net.LookupHost(host)
-	if err == nil {
-		results <- findResult{host: host, ips: ips}
+// bruteForce resolves domain prefixes through a fixed worker pool and streams
+// the hits. The pool matters: a SecLists wordlist is tens of thousands of lines
+// and firing one goroutine per word buries the resolver, which then drops
+// queries and turns into silent false negatives.
+func bruteForce(words []string, domain string, workers int, wildcard map[string]bool) (<-chan findResult, *int64) {
+	results := make(chan findResult)
+	var skipped int64
+
+	if workers < 1 {
+		workers = 1
 	}
+	if len(words) < workers {
+		workers = len(words)
+	}
+
+	go func() {
+		defer close(results)
+
+		jobs := make(chan string)
+		var wg sync.WaitGroup
+
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for sub := range jobs {
+					host := sub + "." + domain
+					ips, err := net.LookupHost(host)
+					if err != nil {
+						continue
+					}
+					if isWildcardHit(ips, wildcard) {
+						atomic.AddInt64(&skipped, 1)
+						continue
+					}
+					results <- findResult{host: host, ips: ips}
+				}
+			}()
+		}
+
+		for _, sub := range words {
+			jobs <- sub
+		}
+		close(jobs)
+		wg.Wait()
+	}()
+
+	return results, &skipped
 }
 
 func loadWordlist(path string) ([]string, error) {
@@ -201,6 +288,21 @@ var subCmd = &cobra.Command{
 		header := fmt.Sprintf("\n[*] %s  ->  %s\n", subDomain, domainIPStr)
 		WriteLineColored(yellow+header+reset, header)
 
+		// Wildcard DNS makes brute force meaningless: every name resolves, so
+		// every word in the list looks like a hit. Detect it up front and use
+		// the addresses to filter the results instead of reporting noise.
+		wildcardIPs := detectWildcardIPs(subDomain)
+		if len(wildcardIPs) > 0 {
+			ips := make([]string, 0, len(wildcardIPs))
+			for ip := range wildcardIPs {
+				ips = append(ips, ip)
+			}
+			sort.Strings(ips)
+			warn := fmt.Sprintf("[!] Wildcard DNS detected: *.%s  ->  %s", subDomain, strings.Join(ips, ", "))
+			WriteLineColored(yellow+warn+reset, warn)
+			WriteLine("    Brute-force hits resolving only to these addresses will be filtered.\n")
+		}
+
 		found := make(map[string]bool)
 		var mu sync.Mutex
 
@@ -226,18 +328,7 @@ var subCmd = &cobra.Command{
 		// --- Source 2: DNS Brute Force ---
 		WriteLine(fmt.Sprintf("\n[*] Running DNS brute force (%d words)...", len(words)))
 
-		results := make(chan findResult)
-		var wg sync.WaitGroup
-
-		for _, sub := range words {
-			wg.Add(1)
-			go checkSubdomain(sub, subDomain, &wg, results)
-		}
-
-		go func() {
-			wg.Wait()
-			close(results)
-		}()
+		results, skipped := bruteForce(words, subDomain, subConcurrency, wildcardIPs)
 
 		bruteCount := 0
 		for r := range results {
@@ -251,6 +342,9 @@ var subCmd = &cobra.Command{
 			mu.Unlock()
 		}
 		WriteLine(fmt.Sprintf("\n  -> %d new subdomains from brute force", bruteCount))
+		if n := atomic.LoadInt64(skipped); n > 0 {
+			WriteLine(fmt.Sprintf("  -> %d wildcard responses filtered out", n))
+		}
 		WriteLine(fmt.Sprintf("\n[*] Done. Found %d unique subdomains total.\n", len(found)))
 	},
 }
@@ -258,5 +352,6 @@ var subCmd = &cobra.Command{
 func init() {
 	subCmd.Flags().StringVarP(&subDomain, "domain", "d", "", "Target domain (e.g. example.com)")
 	subCmd.Flags().StringVarP(&subWordlist, "wordlist", "w", "", "Custom wordlist file")
+	subCmd.Flags().IntVar(&subConcurrency, "concurrency", 50, "Number of DNS lookups in parallel")
 	rootCmd.AddCommand(subCmd)
 }

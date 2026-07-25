@@ -33,13 +33,15 @@ func tlsVersionName(v uint16) string {
 	}
 }
 
-// expiryStatus returns a status label based on days remaining
+// expiryStatus returns a status label based on days remaining. The two-week
+// mark gets its own label — previously it shared "[EXPIRING SOON]" with the
+// 30-day case, which made the tighter branch dead code.
 func expiryStatus(daysLeft int) string {
 	switch {
 	case daysLeft < 0:
 		return "[EXPIRED]"
 	case daysLeft <= 14:
-		return "[EXPIRING SOON]"
+		return "[CRITICAL]"
 	case daysLeft <= 30:
 		return "[EXPIRING SOON]"
 	default:
@@ -60,7 +62,7 @@ var certCmd = &cobra.Command{
 		InitOutput()
 		defer CloseOutput()
 
-		address := certDomain + ":" + certPort
+		address := net.JoinHostPort(certDomain, certPort)
 
 		// Show port in header only if non-default
 		label := certDomain
