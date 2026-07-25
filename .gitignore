@@ -1,0 +1,17 @@
+# Build artifacts
+/sek
+/sek_*
+/dist/
+
+# Test / coverage
+*.test
+*.out
+coverage.*
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local agent notes
+CLAUDE.md

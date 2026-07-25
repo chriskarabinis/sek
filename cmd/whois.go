@@ -13,7 +13,7 @@ import (
 
 // flags
 var whoisDomain string
-var whoisRaw    bool
+var whoisRaw bool
 
 // tldWebRegistries maps TLDs that have no public port-43 WHOIS to their web lookup URLs
 var tldWebRegistries = map[string]string{

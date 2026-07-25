@@ -12,14 +12,14 @@ import (
 )
 
 // flags
-var headersDomain  string
-var headersHTTP    bool
-var headersPort    string
-var headersAll     bool
+var headersDomain string
+var headersHTTP bool
+var headersPort string
+var headersAll bool
 
 type secHeader struct {
-	key  string
-	fix  string
+	key string
+	fix string
 }
 
 // securityHeaders lists the headers checked with a recommended value to add if missing
