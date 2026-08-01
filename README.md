@@ -1,39 +1,92 @@
-# sek — Cloud CLI Kit
+<div align="center">
 
-```
+<pre>
  ___  ___  _  __
 / __|| __|| |/ /
-\__ \| _| | ' <
+\__ \| _| | ' &lt;
 |___/|___||_|\_\
-```
+</pre>
 
-A Cloud CLI Toolkit for the terminal — one tool, one command, no setup.
+# sek — Cloud CLI Kit
 
-*by Chris Karabinis*
+**A single-binary reconnaissance toolkit for the terminal.**
+DNS, subdomains, certificates, WHOIS, port scanning, HTTP security headers, IP
+geolocation and technology fingerprinting — one tool, one consistent interface,
+no setup.
 
-Built to replace the habit of downloading and juggling multiple different tools for everyday reconnaissance tasks. Everything you need is in a single binary: DNS, subdomains, certificates, WHOIS, and port scanning — all with a consistent interface.
+[github.com/chriskarabinis/sek](https://github.com/chriskarabinis/sek)
 
-Also a personal project to understand how security tools are built from the ground up, as part of growing as a SysAdmin and DevOps engineer.
+[![Go](https://img.shields.io/badge/Go-1.24-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
+[![Release](https://img.shields.io/github/v/release/chriskarabinis/sek?style=flat-square&color=success&label=Release)](https://github.com/chriskarabinis/sek/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/chriskarabinis/sek/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/chriskarabinis/sek/actions/workflows/ci.yml)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-lightgrey?style=flat-square)](#requirements)
+[![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 
-Written in Go — single binary, no dependencies.
+</div>
+
+---
+
+## Contents
+
+- [Overview](#overview)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Command overview](#command-overview)
+- [Global flags](#global-flags)
+- [JSON output](#json-output)
+- [Shell completion](#shell-completion)
+- [Command reference](#command-reference)
+  - [sek sub](#sek-sub--subdomain-enumeration)
+  - [sek dns](#sek-dns--dns-records--platform-detection)
+  - [sek cert](#sek-cert--tls-certificate-inspection)
+  - [sek whois](#sek-whois--domain-registration-lookup)
+  - [sek scan](#sek-scan--tcp-port-scanning)
+  - [sek headers](#sek-headers--http-security-headers)
+  - [sek ip](#sek-ip--ip-geolocation)
+  - [sek tf](#sek-tf--technology-fingerprinting)
+  - [sek update](#sek-update--self-update)
+  - [sek uninstall](#sek-uninstall--removal)
+- [Requirements](#requirements)
+- [Development](#development)
+- [Architecture](#architecture)
+- [Responsible use](#responsible-use)
+- [License](#license)
+
+---
+
+## Overview
+
+`sek` exists to replace the habit of downloading and juggling a different tool
+for every routine reconnaissance task. Everything is in one binary, every
+command takes the same flags, and every command can emit JSON.
+
+| | |
+|---|---|
+| **Single binary** | No runtime, no dependencies, no configuration file. Written in Go. |
+| **Consistent interface** | Every command takes `-d` for its target and supports `-o`, `-f` and `--no-color`. |
+| **Scriptable** | `-f json` on any command; errors go to stderr with a non-zero exit code. |
+| **Unprivileged** | TCP connect scanning rather than SYN, so no root is required. |
+
+It is also a deliberate exercise in understanding how security tooling is built
+from the ground up, as part of growing as a SysAdmin and DevOps engineer.
 
 ---
 
 ## Installation
 
-### Install script — recommended (macOS & Linux)
+### Install script — recommended (macOS and Linux)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chriskarabinis/sek/main/install.sh | bash
 ```
 
-### Using Go
+### Go toolchain
 
 ```bash
 go install github.com/chriskarabinis/sek@latest
 ```
 
-### Clone & Build
+### From source
 
 ```bash
 git clone https://github.com/chriskarabinis/sek.git
@@ -44,69 +97,64 @@ sudo mv sek /usr/local/bin/
 
 ---
 
-## Commands
+## Quick start
 
-| Command | Description |
-|---------|-------------|
-| [`sek sub`](#sek-sub) | Subdomain enumeration |
-| [`sek dns`](#sek-dns) | DNS record lookup + platform detection |
-| [`sek cert`](#sek-cert) | SSL/TLS certificate info — expiry, issuer, SANs, TLS version |
-| [`sek whois`](#sek-whois) | WHOIS domain lookup — registrar, dates, nameservers |
-| [`sek scan`](#sek-scan) | Port scanner — open ports, services, banners, firewall detection |
-| [`sek headers`](#sek-headers) | HTTP security headers checker |
-| [`sek ip`](#sek-ip) | IP geolocation — country, city, ISP, ASN |
-| [`sek tf`](#sek-tf) | Technology fingerprinting — CMS, frameworks, analytics, CDN |
-| [`sek update`](#sek-update) | Update sek to the latest version |
-| [`sek uninstall`](#sek-uninstall) | Remove sek from your system |
-
----
-
-## Shell Autocomplete
-
-Enable tab completion for all `sek` commands and flags.
-
-**zsh**
 ```bash
-echo 'source <(sek completion zsh)' >> ~/.zshrc && source ~/.zshrc
-```
-
-**bash**
-```bash
-echo 'source <(sek completion bash)' >> ~/.bashrc && source ~/.bashrc
+sek dns     -d example.com          # every record type plus platform detection
+sek sub     -d example.com          # subdomains from CT logs and brute force
+sek cert    -d example.com          # certificate expiry, issuer, SANs, TLS version
+sek scan    -d example.com          # top 84 ports with service and banner detection
+sek headers -d example.com          # security-header audit with a weighted score
 ```
 
 ---
 
-## Global Flags
+## Command overview
 
-Available on all commands:
+| Command | Purpose |
+|---------|---------|
+| [`sek sub`](#sek-sub--subdomain-enumeration) | Subdomain enumeration via certificate transparency logs and DNS brute force |
+| [`sek dns`](#sek-dns--dns-records--platform-detection) | DNS record lookup, email-security records, wildcard and platform detection |
+| [`sek cert`](#sek-cert--tls-certificate-inspection) | TLS certificate expiry, issuer, SANs, chain, negotiated cipher |
+| [`sek whois`](#sek-whois--domain-registration-lookup) | WHOIS registration data — registrar, dates, nameservers, status |
+| [`sek scan`](#sek-scan--tcp-port-scanning) | TCP port scanning with service identification and firewall detection |
+| [`sek headers`](#sek-headers--http-security-headers) | HTTP security-header audit with a weighted score and remediation |
+| [`sek ip`](#sek-ip--ip-geolocation) | IP geolocation — country, city, ISP, organisation, ASN |
+| [`sek tf`](#sek-tf--technology-fingerprinting) | Technology fingerprinting — server, language, CMS, frameworks, CDN |
+| [`sek update`](#sek-update--self-update) | Checksum-verified, atomic self-update |
+| [`sek uninstall`](#sek-uninstall--removal) | Remove the binary from the system |
+
+---
+
+## Global flags
+
+Available on every command.
 
 | Flag | Description |
 |------|-------------|
-| `-o results.txt` | Save output to file |
+| `-o`, `--output` | Write results to a file in addition to stdout |
 | `-f`, `--format` | Output format: `text` (default) or `json` |
-| `--no-color` | Disable colored output (auto-disabled when piping, and when `NO_COLOR` is set) |
+| `--no-color` | Disable ANSI colour. Also disabled automatically when stdout is not a terminal, or when `NO_COLOR` is set |
 
 ---
 
-## JSON Output
+## JSON output
 
-Every command can emit its result as JSON instead of text, which makes `sek`
+Every command can emit its result as a single JSON document, which makes `sek`
 composable with `jq` and anything else that reads a pipe.
 
 ```bash
-sek dns -d example.com -f json | jq -r '.sections[].records[].value'
-sek scan -d example.com -f json | jq '.ports[] | select(.state == "open") | .port'
+sek dns     -d example.com -f json | jq -r '.sections[].records[].value'
+sek scan    -d example.com -f json | jq '.ports[] | select(.state == "open") | .port'
 sek headers -d example.com -f json | jq '.score, .rating'
-sek cert -d example.com -f json | jq -r '.days_left'
+sek cert    -d example.com -f json | jq -r '.days_left'
 ```
 
-In JSON mode, progress messages are suppressed and warnings go to stderr, so
-stdout always holds exactly one JSON document. `-o` writes the same document to
-a file.
+In JSON mode progress messages are suppressed and warnings are routed to stderr,
+so stdout always holds exactly one document. `-o` writes that same document to a
+file.
 
-Errors go to stderr and set a non-zero exit code, so failures are detectable in
-scripts:
+Failures set a non-zero exit code, so they are detectable in scripts:
 
 ```bash
 if ! sek cert -d example.com --expiry-days 30 >/dev/null; then
@@ -116,27 +164,40 @@ fi
 
 ---
 
-## sek sub
+## Shell completion
 
-Discover subdomains using two methods:
-- **Certificate Transparency Logs** — queries [crt.sh](https://crt.sh) for known subdomains from public SSL certificates
-- **DNS Brute Force** — tests 200+ common subdomain prefixes in parallel
+Tab completion for all commands and flags.
 
-### Usage
+```bash
+# zsh
+echo 'source <(sek completion zsh)' >> ~/.zshrc && source ~/.zshrc
+
+# bash
+echo 'source <(sek completion bash)' >> ~/.bashrc && source ~/.bashrc
+```
+
+---
+
+## Command reference
+
+### `sek sub` — subdomain enumeration
+
+Discovers subdomains from two independent sources:
+
+- **Certificate transparency logs** — queries [crt.sh](https://crt.sh) for names
+  appearing in published certificates.
+- **DNS brute force** — resolves a built-in list of 214 common prefixes through
+  a bounded worker pool.
 
 ```bash
 sek sub -d <domain> [flags]
 ```
-
-### Flags
 
 | Flag | Long | Description |
 |------|------|-------------|
 | `-d` | `--domain` | Target domain (required) |
 | `-w` | `--wordlist` | Custom wordlist file |
 |      | `--concurrency` | Parallel DNS lookups (default: 50) |
-
-### Examples
 
 ```bash
 sek sub -d example.com
@@ -145,19 +206,17 @@ sek sub -d example.com -w wordlist.txt
 sek sub -d example.com --concurrency 100
 ```
 
-### Wildcard DNS
-
-Domains with a `*.example.com` record answer for every name, which would make
-brute force report every word in the list as a real subdomain. `sek sub` probes
-for a wildcard first and filters out hits that resolve only to the wildcard
-addresses, reporting how many it dropped:
+**Wildcard DNS.** A domain with a `*.example.com` record answers for every name,
+which would make brute force report every word in the list as a real subdomain.
+`sek sub` probes for a wildcard first, filters out hits that resolve only to the
+wildcard addresses, and reports how many it dropped.
 
 ```
 [!] Wildcard DNS detected: *.example.com  ->  203.0.113.10
     Brute-force hits resolving only to these addresses will be filtered.
 ```
 
-### Output
+**Output.**
 
 ```
 [*] example.com  ->  93.184.216.34
@@ -173,48 +232,40 @@ addresses, reporting how many it dropped:
 [*] Done. Found 3 unique subdomains total.
 ```
 
-### Custom Wordlist Format
-
-Plain text, one word per line. Lines starting with `#` are ignored.
+**Custom wordlists.** Plain text, one entry per line; blank lines and lines
+starting with `#` are ignored.
 
 ```
 # My wordlist
 www
 api
 admin
-dev
 ```
 
-For deep enumeration, use [SecLists](https://github.com/danielmiessler/SecLists):
+For deeper enumeration, point it at [SecLists](https://github.com/danielmiessler/SecLists):
 
 ```bash
-brew install seclists
 sek sub -d example.com -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt
 ```
 
 ---
 
-## sek dns
+### `sek dns` — DNS records + platform detection
 
-Query DNS records for a domain and automatically detect the hosting/CDN platform.
-
-### Usage
+Queries every common record type and infers the hosting or CDN provider behind
+the domain.
 
 ```bash
 sek dns -d <domain> [flags]
 sek dns -r <ip>
 ```
 
-### Flags
-
 | Flag | Long | Description |
 |------|------|-------------|
-| `-d` | `--domain` | Target domain (required) |
-| `-t` | `--type` | Record type: A, MX, NS, TXT, CNAME, SOA, CAA, EMAIL (default: all) |
-| `-s` | `--server` | Custom DNS server (e.g. 8.8.8.8) |
-| `-r` | `--reverse` | Reverse DNS lookup for an IP address |
-
-### Examples
+| `-d` | `--domain` | Target domain (required unless `-r` is used) |
+| `-t` | `--type` | Record type: `A`, `MX`, `NS`, `TXT`, `CNAME`, `SOA`, `CAA`, `EMAIL` (default: all) |
+| `-s` | `--server` | Upstream DNS server (e.g. `8.8.8.8`) |
+| `-r` | `--reverse` | Reverse lookup for an IP address |
 
 ```bash
 sek dns -d example.com
@@ -224,71 +275,61 @@ sek dns -d example.com -s 1.1.1.1
 sek dns -r 8.8.8.8
 ```
 
-### Output
+**Output.**
 
 ```
 [*] DNS lookup for: example.com
 
 [*] A / AAAA
-  A       93.184.216.34
+  A       93.184.216.34                    TTL: 300s
 
 [*] MX
-  MX      mail.example.com (priority: 10)
-
-[*] NS
-  NS      ns1.example.com
-
-[*] TXT
-  TXT     v=spf1 include:_spf.example.com ~all
-
-[*] SOA
-  SOA     primary: ns1.example.com | admin: admin@example.com | serial: 2024010101 | refresh: 900s
-
-[*] CAA
-  CAA     0 issue "letsencrypt.org"
+  MX      mail.example.com (priority: 10)  TTL: 3600s
 
 [*] Email Security (SPF / DMARC / DKIM)
   SPF     v=spf1 include:_spf.example.com ~all
   DMARC   v=DMARC1; p=reject; rua=mailto:dmarc@example.com
   DKIM    [google] v=DKIM1; k=rsa; p=...
 
+[*] Wildcard DNS
+  No wildcard DNS detected.
+
 [*] Platform detected: Cloudflare
 ```
 
-Also shows TTL for every record, wildcard DNS detection, and platform detection via NS records, CNAME patterns, and IP ranges. Supports global providers (Cloudflare, AWS, Azure, Akamai, Fastly) and Greek providers (Fastpath, Papaki, Top.Host, Forthnet, Cosmote).
+TTL is shown for every record. Platform detection works through nameservers,
+CNAME targets and published IP ranges, matched as real CIDRs rather than string
+prefixes. It covers global providers (Cloudflare, AWS, Azure, Akamai, Fastly,
+DigitalOcean, Hetzner, OVH) and Greek providers (Fastpath, Papaki, Top.Host,
+Forthnet, Cosmote, Cyta).
+
+`EMAIL` probes SPF, DMARC and DKIM at ten common selectors. There is no way to
+enumerate DKIM selectors, so absence is not proof that none exists.
 
 ---
 
-## sek cert
-
-Inspect SSL/TLS certificates for a domain.
-
-### Usage
+### `sek cert` — TLS certificate inspection
 
 ```bash
 sek cert -d <domain> [flags]
 ```
 
-### Flags
-
 | Flag | Description |
 |------|-------------|
 | `-d` | Target domain (required) |
-| `-p` | Port (default: 443) |
-| `-c` | Show full certificate chain |
-| `--insecure` | Skip verification (for self-signed certs) |
+| `-p` | Port (default: `443`) |
+| `-c` | Show the full presented chain |
+| `--insecure` | Skip verification, for self-signed certificates |
 | `--expiry-days N` | Exit non-zero if the certificate expires within N days |
-
-### Examples
 
 ```bash
 sek cert -d example.com
 sek cert -d example.com -c
 sek cert -d example.com -p 8443
-sek cert -d example.com --expiry-days 30    # for cron / CI
+sek cert -d example.com --expiry-days 30    # for cron or CI
 ```
 
-### Output
+**Output.**
 
 ```
 [*] SSL/TLS Certificate for: example.com
@@ -300,7 +341,6 @@ sek cert -d example.com --expiry-days 30    # for cron / CI
   Valid From    2026-01-01 00:00:00 UTC
   Valid To      2026-04-01 00:00:00 UTC
   Days Left     71 days  [OK]
-
   Serial        ABC123...
 
 [*] Subject Alternative Names (SANs)
@@ -312,35 +352,32 @@ sek cert -d example.com --expiry-days 30    # for cron / CI
   Cipher        TLS_AES_128_GCM_SHA256
 ```
 
-Status labels: `[OK]` · `[EXPIRING SOON]` (≤30 days) · `[CRITICAL]` (≤14 days) · `[EXPIRED]`
+Status labels: `[OK]` · `[EXPIRING SOON]` (≤ 30 days) · `[CRITICAL]` (≤ 14 days)
+· `[EXPIRED]`.
+
+Expiry is decided by comparing the certificate's `NotAfter` against the current
+time, not by the rounded day count, so a certificate that lapsed within the last
+24 hours is still reported as expired.
 
 ---
 
-## sek whois
-
-Query WHOIS information for a domain.
-
-### Usage
+### `sek whois` — domain registration lookup
 
 ```bash
 sek whois -d <domain> [flags]
 ```
 
-### Flags
-
 | Flag | Description |
 |------|-------------|
 | `-d` | Target domain (required) |
-| `-r` | Show raw WHOIS response |
-
-### Examples
+| `-r` | Show the raw WHOIS response |
 
 ```bash
 sek whois -d example.com
 sek whois -d example.com -r
 ```
 
-### Output
+**Output.**
 
 ```
 [*] WHOIS lookup for: example.com
@@ -360,45 +397,47 @@ sek whois -d example.com -r
   ns2.example.com
 ```
 
-> Note: Some TLDs (e.g. `.gr`) do not operate a public WHOIS server on port 43. For those, `sek whois` displays TLD registry info from IANA and shows a link to the web-based lookup (e.g. `https://grweb.ics.forth.gr/` for `.gr`).
+Thin registries such as `.com` answer with a referral rather than the
+registrant details, so the registrar's own server is queried as well and the
+fields are merged. Multi-label public suffixes (`co.uk`, `com.gr`, `act.edu.au`)
+are resolved to the registry that actually serves them.
+
+> Some TLDs — `.gr` among them — operate no public WHOIS service on port 43. For
+> those, `sek whois` shows the TLD registry data from IANA and a link to the
+> web-based lookup.
 
 ---
 
-## sek scan
+### `sek scan` — TCP port scanning
 
-Scan a host for open ports, identify running services, and detect firewall filtering. Uses TCP connect scanning — no root required.
-
-### Usage
+Connect scanning, so no elevated privileges are needed. Identifies services and
+grabs banners from open ports, and distinguishes a firewalled port from a
+closed one.
 
 ```bash
 sek scan -d <domain or IP> [flags]
 ```
 
-### Flags
-
 | Flag | Description |
 |------|-------------|
 | `-d` | Target domain or IP (required) |
-| `-p` | Ports: comma-separated or range (e.g. `80,443` or `1-1000`). Default: top 84 common ports |
-| `-t` | Connection timeout in milliseconds (default: 2000) |
+| `-p` | Ports: comma-separated or a range, e.g. `80,443` or `1-1000` (default: top 84) |
+| `-t` | Connection timeout in milliseconds (default: `2000`) |
 | `--all` | Scan all 65535 ports |
-| `--filter` | Also show filtered (firewalled) ports |
-| `--concurrency` | Ports probed in parallel (default: 300) |
-
-### Examples
+| `--filter` | Also show filtered ports |
+| `--concurrency` | Ports probed in parallel (default: `300`) |
 
 ```bash
 sek scan -d example.com
 sek scan -d example.com -p 22,80,443,3306
 sek scan -d example.com -p 1-1000
-sek scan -d example.com --all
-sek scan -d example.com --filter
 sek scan -d example.com --all --concurrency 500
+sek scan -d example.com --filter
 ```
 
-Works against IPv6 targets as well as IPv4 and hostnames.
+IPv6 targets, IPv4 targets and hostnames are all supported.
 
-### Output
+**Output.**
 
 ```
 [*] Port scan for: example.com (93.184.216.34)
@@ -414,33 +453,26 @@ Works against IPv6 targets as well as IPv4 and hostnames.
 [*] Done. 3 open  |  2 filtered  |  79 closed
 ```
 
-Port states:
-- **open** — port is accepting connections (service is running)
-- **filtered** — firewall is dropping packets (port is protected, use `--filter` to show)
-- **closed** — host actively refused the connection (no service, no firewall)
+| State | Meaning |
+|-------|---------|
+| `open` | The port accepted the connection — a service is listening |
+| `filtered` | The connection timed out — a firewall is dropping packets. Hidden unless `--filter` is given, since on a wide scan these dominate the output |
+| `closed` | The host actively refused — no service, no firewall |
 
 ---
 
-## sek headers
-
-Check HTTP response headers for security best practices.
-
-### Usage
+### `sek headers` — HTTP security headers
 
 ```bash
 sek headers -d <domain> [flags]
 ```
 
-### Flags
-
 | Flag | Description |
 |------|-------------|
 | `-d` | Target domain (required) |
-| `--http` | Use HTTP instead of HTTPS |
 | `-p` | Custom port |
-| `--all` | Show all response headers |
-
-### Examples
+| `--http` | Use HTTP instead of HTTPS |
+| `--all` | Show every response header |
 
 ```bash
 sek headers -d example.com
@@ -448,7 +480,7 @@ sek headers -d example.com --http
 sek headers -d example.com --all
 ```
 
-### Output
+**Output.**
 
 ```
 [*] HTTP Security Headers for: example.com
@@ -461,12 +493,12 @@ sek headers -d example.com --all
 [*] Security Headers
   HEADER                             STATE     VALUE
   --------------------------------------------------------------------------------
-  Strict-Transport-Security          PRESENT   max-age=31536000
   Content-Security-Policy            MISSING   -
+  Strict-Transport-Security          PRESENT   max-age=31536000
   X-Frame-Options                    PRESENT   SAMEORIGIN
   X-Content-Type-Options             PRESENT   nosniff
   Referrer-Policy                    PRESENT   strict-origin-when-cross-origin
-  Permissions-Policy                 MISSING   -
+  Permissions-Policy                 PRESENT   camera=(), microphone=()
 
 [*] Score: 8/11 — Good
 
@@ -474,10 +506,8 @@ sek headers -d example.com --all
   X-XSS-Protection                   DEPRECATED 1; mode=block
 ```
 
-### Scoring
-
-The score is weighted rather than a plain count, because the headers do not
-matter equally:
+**Scoring.** Weighted rather than a plain count, because these headers do not
+matter equally.
 
 | Header | Points |
 |--------|--------|
@@ -488,36 +518,30 @@ matter equally:
 | `Referrer-Policy` | 1 |
 | `Permissions-Policy` | 1 |
 
-Ratings: `Excellent` (11/11) · `Good` (≥70%) · `Fair` (≥40%) · `Poor` (<40%)
+Ratings: `Excellent` (11/11) · `Good` (≥ 70%) · `Fair` (≥ 40%) · `Poor` (< 40%).
 
-`X-XSS-Protection` is **not** scored. The legacy XSS auditor it enables
-introduced injection vectors of its own and has been removed from current
-browsers, so the guidance is to drop the header or send `0`. `sek` reports it as
-deprecated when present rather than rewarding its absence.
+`X-XSS-Protection` is deliberately **not** scored. The legacy XSS auditor it
+enables introduced injection vectors of its own and has been removed from every
+current browser, so current guidance is to drop it or send `0`. `sek` reports it
+as a finding when present rather than rewarding its absence.
 
-Redirects are followed, so when the response comes from a different URL than the
-one requested, that URL is shown as `Redirected To`.
+Redirects are followed, so when the response comes from a different origin than
+the one requested, that URL is reported as `Redirected To`.
 
 ---
 
-## sek ip
-
-Look up geolocation, ISP, ASN, and network info for an IP address or domain.
-
-### Usage
+### `sek ip` — IP geolocation
 
 ```bash
 sek ip -d <IP or domain>
 ```
-
-### Examples
 
 ```bash
 sek ip -d 8.8.8.8
 sek ip -d example.com
 ```
 
-### Output
+**Output.**
 
 ```
 [*] IP Lookup for: example.com
@@ -533,29 +557,30 @@ sek ip -d example.com
   ASN             AS15133 Edgecast Inc.
 ```
 
-> Uses [ip-api.com](http://ip-api.com) — free, no API key required (45 req/min).
+Fields the service has no data for are omitted rather than shown as blank or
+zero values.
+
+> Backed by [ip-api.com](http://ip-api.com) — free, no API key, 45 requests per
+> minute. The free tier is HTTP-only, so these lookups are visible to anything
+> on the network path.
 
 ---
 
-## sek tf
+### `sek tf` — technology fingerprinting
 
-Detect technologies used by a website — web server, language, CMS, JS frameworks, analytics, and CDN.
-
-### Usage
+Identifies the web server, language, CMS, JavaScript frameworks, analytics and
+CDN behind a site from its response headers, cookies and markup. 51 signatures
+covering 47 products across 7 categories.
 
 ```bash
 sek tf -d <domain> [flags]
 ```
 
-### Flags
-
 | Flag | Description |
 |------|-------------|
 | `-d` | Target domain (required) |
-| `--http` | Use HTTP instead of HTTPS |
 | `-p` | Custom port |
-
-### Examples
+| `--http` | Use HTTP instead of HTTPS |
 
 ```bash
 sek tf -d example.com
@@ -563,13 +588,13 @@ sek tf -d example.com --http
 sek tf -d example.com -p 8080
 ```
 
-### Output
+**Output.**
 
 ```
 [*] Technology Fingerprint for: example.com
 
 [*] Web Server
-  nginx
+  nginx 1.18.0
 
 [*] CMS
   WordPress
@@ -580,60 +605,54 @@ sek tf -d example.com -p 8080
 
 [*] Analytics
   Google Analytics
-  Google Tag Manager
 
 [*] CDN / Security
   Cloudflare
 ```
 
-Detects: web servers, languages (PHP, ASP.NET, Node.js, Java), CMS (WordPress, Joomla, Drupal, Shopify...), JS frameworks (React, Vue, Next.js, Angular...), analytics, and CDN/security layers. Versions are reported where the response reveals them, e.g. `nginx 1.18.0`.
-
-Markup signatures match asset references (`jquery.min.js`, `/jquery-`) rather
-than bare product names, so an article that merely mentions a library is not
-reported as using it.
+Versions are reported wherever the response reveals them. Markup signatures
+match asset references (`jquery.min.js`, `/jquery-`) rather than bare product
+names, so an article that merely mentions a library is not reported as using it.
 
 ---
 
-## sek update
+### `sek update` — self-update
 
-Update sek to the latest version. Detects your OS and architecture automatically.
+Detects the operating system and architecture, then downloads the matching
+release binary.
 
 ```bash
 sek update
+sudo sek update    # if the install directory is not writable
 ```
 
-The download is verified against the `checksums.txt` published with each
-release, and installed with an atomic replace, so an interrupted update leaves
-the existing binary intact. If permission is denied, run with sudo:
-
-```bash
-sudo sek update
-```
+The download is verified against the `checksums.txt` published with each release
+and installed with an atomic rename, so an interrupted update leaves the
+existing binary intact rather than truncated.
 
 ---
 
-## sek uninstall
-
-Remove sek from your system. Shows the resolved path and asks for confirmation
-first, since the binary being run is not always the installed one.
+### `sek uninstall` — removal
 
 ```bash
 sek uninstall
-sek uninstall --yes    # skip the prompt
+sek uninstall --yes    # skip the confirmation prompt
+sudo sek uninstall     # if the install directory is not writable
 ```
 
-If permission is denied, run with sudo:
-
-```bash
-sudo sek uninstall
-```
+The resolved path is shown and confirmation requested first, because the binary
+being run is not always the installed one — a `./sek` built in a working copy is
+a real possibility.
 
 ---
 
 ## Requirements
 
-- macOS or Linux
-- Go 1.24+ (only if installing via `go install` or building from source)
+| | |
+|---|---|
+| **Operating system** | macOS or Linux |
+| **Runtime dependencies** | None — `sek` ships as a single self-contained binary |
+| **Go** | 1.24 or newer, only when installing via `go install` or building from source |
 
 ---
 
@@ -641,31 +660,55 @@ sudo sek uninstall
 
 ```bash
 go build ./...      # build
-go test ./...       # run the test suite
-go vet ./...        # static checks
-gofmt -l .          # formatting (should print nothing)
+go test -race ./... # test suite
+go vet ./...        # static analysis
+gofmt -l .          # formatting — should print nothing
+go mod tidy         # dependency hygiene
 ```
 
-Layout: `cmd/` holds the cobra commands and does only flag parsing and
-rendering; `internal/` holds the logic, one package per capability
-(`dnsx`, `subx`, `certx`, `scanx`, `whoisx`, `webx`, `ipx`) plus `output` for
-rendering. Each returns typed results, which is what both the tests and the
-JSON output are built on.
+CI runs all of the above on every push and pull request, plus a cross-compile of
+all four release targets (`darwin/amd64`, `darwin/arm64`, `linux/amd64`,
+`linux/arm64`).
 
 ---
 
-## Responsible Use
+## Architecture
 
-`sek` performs active reconnaissance — port scanning, DNS brute force and HTTP
-requests against a target. Use it only on systems you own or have explicit
-permission to test. Unauthorized scanning may be illegal in your jurisdiction.
+```
+cmd/                 cobra commands — flag parsing and rendering only
+internal/
+  ├── dnsx/          DNS queries, platform detection
+  ├── subx/          subdomain enumeration, wordlist handling
+  ├── certx/         TLS certificate inspection
+  ├── scanx/         TCP connect scanning, service identification
+  ├── whoisx/        WHOIS querying and response parsing
+  ├── webx/          HTTP security headers, technology fingerprinting
+  ├── ipx/           IP geolocation
+  └── output/        text and JSON rendering, colour handling
+```
+
+The split is deliberate: `cmd/` never contains logic, and each `internal`
+package returns typed results rather than printing. That is what both the test
+suite and the JSON output are built on — the JSON is the result struct, not a
+second rendering path that can drift from the text one.
+
+---
+
+## Responsible use
+
+`sek` performs **active** reconnaissance — it opens TCP connections, brute-forces
+DNS names and issues HTTP requests against a target. Use it only against systems
+you own or have explicit written permission to test. Unauthorised scanning is
+illegal in many jurisdictions.
 
 ---
 
 ## License
 
-MIT
+[MIT](LICENSE)
 
----
+<div align="center">
 
 Built by [Chris Karabinis](https://github.com/chriskarabinis)
+
+</div>
