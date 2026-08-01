@@ -57,17 +57,24 @@ type Options struct {
 }
 
 // Expired reports whether the certificate is past its validity window.
-func (r *Result) Expired() bool { return r.DaysLeft < 0 }
+//
+// It compares NotAfter rather than testing DaysLeft < 0. DaysLeft truncates
+// toward zero, so a certificate that lapsed within the last 24 hours carries
+// DaysLeft == 0 and a day-count test would call it live.
+func (r *Result) Expired() bool { return time.Now().After(r.NotAfter) }
 
-// ExpiresWithin reports whether the certificate expires in at most days.
-func (r *Result) ExpiresWithin(days int) bool { return r.DaysLeft <= days }
+// ExpiresWithin reports whether the certificate expires in at most days. An
+// already-expired certificate always qualifies.
+func (r *Result) ExpiresWithin(days int) bool { return r.Expired() || r.DaysLeft <= days }
 
-// expiryStatus maps days remaining onto a status label. The critical band is
-// distinct from the 30-day band so a certificate about to lapse is visibly
-// different from one merely approaching renewal.
-func expiryStatus(daysLeft int) string {
+// expiryStatus maps a certificate's remaining life onto a status label. The
+// critical band is distinct from the 30-day band so a certificate about to
+// lapse is visibly different from one merely approaching renewal.
+//
+// Expiry is decided by notAfter for the same truncation reason as Expired.
+func expiryStatus(notAfter time.Time, daysLeft int) string {
 	switch {
-	case daysLeft < 0:
+	case time.Now().After(notAfter):
 		return StatusExpired
 	case daysLeft <= criticalDays:
 		return StatusCritical
@@ -152,7 +159,7 @@ func build(host, port string, state tls.ConnectionState) *Result {
 		NotBefore:  leaf.NotBefore.UTC(),
 		NotAfter:   leaf.NotAfter.UTC(),
 		DaysLeft:   daysLeft,
-		Status:     expiryStatus(daysLeft),
+		Status:     expiryStatus(leaf.NotAfter, daysLeft),
 		Serial:     fmt.Sprintf("%X", leaf.SerialNumber),
 		DNSNames:   leaf.DNSNames,
 		TLSVersion: tlsVersionName(state.Version),

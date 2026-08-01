@@ -3,7 +3,15 @@ package certx
 import (
 	"crypto/tls"
 	"testing"
+	"time"
 )
+
+// daysFromNow builds a NotAfter for a certificate with that many whole days
+// left. The extra hour keeps day 0 meaning "expires later today" rather than
+// landing exactly on now, where the comparison could fall either way.
+func daysFromNow(days int) time.Time {
+	return time.Now().Add(time.Duration(days)*24*time.Hour + time.Hour)
+}
 
 // TestExpiryStatus pins the boundaries. The 14-day branch used to return the
 // same label as the 30-day one, which made it unreachable in practice.
@@ -25,7 +33,7 @@ func TestExpiryStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := expiryStatus(tt.daysLeft); got != tt.want {
+			if got := expiryStatus(daysFromNow(tt.daysLeft), tt.daysLeft); got != tt.want {
 				t.Errorf("expiryStatus(%d) = %q, want %q", tt.daysLeft, got, tt.want)
 			}
 		})
@@ -35,8 +43,8 @@ func TestExpiryStatus(t *testing.T) {
 // TestExpiryStatusBandsAreDistinct guards the specific defect: two branches
 // returning the same string.
 func TestExpiryStatusBandsAreDistinct(t *testing.T) {
-	critical := expiryStatus(10)
-	expiring := expiryStatus(20)
+	critical := expiryStatus(daysFromNow(10), 10)
+	expiring := expiryStatus(daysFromNow(20), 20)
 	if critical == expiring {
 		t.Errorf("the 14-day and 30-day bands both report %q; they must differ", critical)
 	}
@@ -56,7 +64,7 @@ func TestExpiresWithin(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res := &Result{DaysLeft: tt.daysLeft}
+			res := &Result{DaysLeft: tt.daysLeft, NotAfter: daysFromNow(tt.daysLeft)}
 			if got := res.ExpiresWithin(tt.threshold); got != tt.want {
 				t.Errorf("ExpiresWithin(%d) with %d days left = %v, want %v",
 					tt.threshold, tt.daysLeft, got, tt.want)
@@ -65,12 +73,48 @@ func TestExpiresWithin(t *testing.T) {
 	}
 }
 
+// TestExpired covers the exact-expiry predicate. DaysLeft truncates toward
+// zero, so a certificate that lapsed in the last 24 hours reports 0 days left;
+// keying off that value reported it as still valid.
 func TestExpired(t *testing.T) {
-	if (&Result{DaysLeft: -1}).Expired() != true {
-		t.Error("Expired() = false for a certificate past its validity")
+	tests := []struct {
+		name     string
+		notAfter time.Time
+		want     bool
+	}{
+		{"long expired", time.Now().Add(-100 * 24 * time.Hour), true},
+		{"expired yesterday", time.Now().Add(-25 * time.Hour), true},
+		{"expired five hours ago", time.Now().Add(-5 * time.Hour), true},
+		{"expired one minute ago", time.Now().Add(-time.Minute), true},
+		{"expires in one hour", time.Now().Add(time.Hour), false},
+		{"expires tomorrow", time.Now().Add(25 * time.Hour), false},
 	}
-	if (&Result{DaysLeft: 0}).Expired() != false {
-		t.Error("Expired() = true for a certificate expiring today")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := &Result{NotAfter: tt.notAfter, DaysLeft: int(time.Until(tt.notAfter).Hours() / 24)}
+			if got := res.Expired(); got != tt.want {
+				t.Errorf("Expired() = %v, want %v (DaysLeft = %d)", got, tt.want, res.DaysLeft)
+			}
+		})
+	}
+}
+
+// TestRecentlyExpiredIsReported ties the two helpers together for the case
+// that slipped through: a certificate a few hours past NotAfter must be
+// flagged by both the status label and the --expiry-days gate.
+func TestRecentlyExpiredIsReported(t *testing.T) {
+	notAfter := time.Now().Add(-5 * time.Hour)
+	daysLeft := int(time.Until(notAfter).Hours() / 24)
+	if daysLeft != 0 {
+		t.Fatalf("precondition: DaysLeft = %d, want 0 for a certificate expired 5 hours ago", daysLeft)
+	}
+
+	if got := expiryStatus(notAfter, daysLeft); got != StatusExpired {
+		t.Errorf("expiryStatus() = %q, want %q", got, StatusExpired)
+	}
+	res := &Result{NotAfter: notAfter, DaysLeft: daysLeft}
+	if !res.ExpiresWithin(30) {
+		t.Error("ExpiresWithin(30) = false for an already-expired certificate")
 	}
 }
 
