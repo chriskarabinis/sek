@@ -57,6 +57,10 @@ var dnsCmd = &cobra.Command{
 		wanted := strings.ToUpper(strings.TrimSpace(dnsType))
 		all := wanted == ""
 
+		// Records are kept as they come back so platform detection can reuse
+		// them instead of asking the resolver the same questions again.
+		fetched := make(map[string][]dnsx.Record, len(dnsLookups))
+
 		for _, l := range dnsLookups {
 			if !all && l.key != wanted {
 				continue
@@ -65,6 +69,13 @@ var dnsCmd = &cobra.Command{
 			section := dnsx.Section{Title: l.title, Records: records}
 			if err != nil {
 				section.Error = err.Error()
+			} else {
+				// A nil entry means "not fetched" to dnsx, so record an empty
+				// non-nil slice for a query that ran and simply found nothing.
+				if records == nil {
+					records = []dnsx.Record{}
+				}
+				fetched[l.key] = records
 			}
 			res.Sections = append(res.Sections, section)
 		}
@@ -76,7 +87,11 @@ var dnsCmd = &cobra.Command{
 		if all {
 			res.Wildcard = resolver.Wildcard(dnsDomain)
 		}
-		res.Platform = resolver.DetectPlatform(dnsDomain)
+		res.Platform = resolver.DetectPlatform(dnsDomain, &dnsx.Known{
+			NS:    fetched["NS"],
+			CNAME: fetched["CNAME"],
+			A:     fetched["A"],
+		})
 
 		if w.IsJSON() {
 			return w.JSON(res)
