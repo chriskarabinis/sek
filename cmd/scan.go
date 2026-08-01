@@ -51,7 +51,7 @@ var scanCmd = &cobra.Command{
 		w.Section("Scanning %d ports...", len(ports))
 		w.Blank()
 
-		res, err := scanx.Scan(ctx, scanTarget, ports, scanx.Options{
+		res, err := scanx.ScanAddr(ctx, scanTarget, ip, ports, scanx.Options{
 			Timeout:     time.Duration(scanTimeout) * time.Millisecond,
 			Concurrency: scanConcurrency,
 		})
