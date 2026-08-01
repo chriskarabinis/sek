@@ -5,6 +5,7 @@ package scanx
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"sort"
@@ -137,20 +138,28 @@ func Resolve(target string) (string, error) {
 	return addrs[0], nil
 }
 
-// Scan probes every port through a fixed worker pool. The pool size is what
-// bounds resource use: one goroutine per port would park 65535 of them on a
-// full-range scan.
+// Scan resolves target and probes every port on it.
 func Scan(ctx context.Context, target string, ports []int, opts Options) (*Result, error) {
+	ip, err := Resolve(target)
+	if err != nil {
+		return nil, err
+	}
+	return ScanAddr(ctx, target, ip, ports, opts)
+}
+
+// ScanAddr probes every port on ip through a fixed worker pool, labelling the
+// result with target. Callers that have already resolved the name use this so
+// the lookup is not repeated — and so the address they reported to the user is
+// the one actually scanned.
+//
+// The pool size is what bounds resource use: one goroutine per port would park
+// 65535 of them on a full-range scan.
+func ScanAddr(ctx context.Context, target, ip string, ports []int, opts Options) (*Result, error) {
 	if opts.Timeout <= 0 {
 		opts.Timeout = 2 * time.Second
 	}
 	if opts.Concurrency < 1 {
 		opts.Concurrency = 300
-	}
-
-	ip, err := Resolve(target)
-	if err != nil {
-		return nil, err
 	}
 
 	results := make([]Port, len(ports))
@@ -219,19 +228,13 @@ func probe(ctx context.Context, host string, port int, timeout time.Duration) Po
 		}
 	}
 
+	// errors.As rather than a bare type assertion: a timeout wrapped by an
+	// intermediate error still means "filtered", not "closed".
 	var netErr net.Error
-	if ok := asNetError(err, &netErr); ok && netErr.Timeout() {
+	if errors.As(err, &netErr) && netErr.Timeout() {
 		return Port{Port: port, State: StateFiltered, Service: ServiceName(port)}
 	}
 	return Port{Port: port, State: StateClosed}
-}
-
-func asNetError(err error, target *net.Error) bool {
-	if ne, ok := err.(net.Error); ok {
-		*target = ne
-		return true
-	}
-	return false
 }
 
 // grabVersion asks an open port to identify itself: an HTTP request for web
@@ -245,8 +248,11 @@ func grabVersion(ctx context.Context, host string, port int, timeout time.Durati
 		if net.ParseIP(host) != nil {
 			serverName = ""
 		}
-		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", address,
-			&tls.Config{InsecureSkipVerify: true, ServerName: serverName})
+		dialer := &tls.Dialer{
+			NetDialer: &net.Dialer{Timeout: timeout},
+			Config:    &tls.Config{InsecureSkipVerify: true, ServerName: serverName},
+		}
+		conn, err := dialer.DialContext(ctx, "tcp", address)
 		if err != nil {
 			return ""
 		}

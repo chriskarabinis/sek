@@ -115,15 +115,22 @@ func Inspect(ctx context.Context, host string, opts Options) (*Result, error) {
 		opts.Timeout = 10 * time.Second
 	}
 
-	dialer := &net.Dialer{Timeout: opts.Timeout}
-	conn, err := tls.DialWithDialer(dialer, "tcp",
-		net.JoinHostPort(host, opts.Port),
-		&tls.Config{InsecureSkipVerify: opts.Insecure, ServerName: host},
-	)
+	// tls.Dialer rather than tls.DialWithDialer: only the former honours ctx, so
+	// Ctrl+C during a hung handshake actually stops the command.
+	dialer := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: opts.Timeout},
+		Config:    &tls.Config{InsecureSkipVerify: opts.Insecure, ServerName: host},
+	}
+	raw, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, opts.Port))
 	if err != nil {
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
-	defer conn.Close()
+	defer raw.Close()
+
+	conn, ok := raw.(*tls.Conn)
+	if !ok {
+		return nil, fmt.Errorf("unexpected connection type %T", raw)
+	}
 
 	state := conn.ConnectionState()
 	if len(state.PeerCertificates) == 0 {
