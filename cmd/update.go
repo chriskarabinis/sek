@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -32,6 +33,17 @@ type githubRelease struct {
 // of completing a TLS handshake each.
 var updateClient = &http.Client{Timeout: 60 * time.Second}
 
+// get issues a cancellable GET. Every request an update makes goes through
+// here so that interrupting the command actually aborts it — the download in
+// particular can be tens of megabytes.
+func get(ctx context.Context, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return updateClient.Do(req)
+}
+
 // isNewer returns true if b is strictly newer than a (semver: "0.1.2" > "0.1.1")
 func isNewer(current, latest string) bool {
 	parse := func(v string) [3]int {
@@ -52,8 +64,8 @@ func isNewer(current, latest string) bool {
 	return false
 }
 
-func fetchLatestVersion() (string, error) {
-	resp, err := updateClient.Get(repoAPI)
+func fetchLatestVersion(ctx context.Context) (string, error) {
+	resp, err := get(ctx, repoAPI)
 	if err != nil {
 		return "", err
 	}
@@ -75,9 +87,9 @@ func fetchLatestVersion() (string, error) {
 
 // fetchExpectedChecksum returns the published SHA-256 for one release asset.
 // Format is `sha256sum` output: "<hex>  <filename>" per line.
-func fetchExpectedChecksum(version, assetName string) (string, error) {
+func fetchExpectedChecksum(ctx context.Context, version, assetName string) (string, error) {
 	url := fmt.Sprintf("%s/v%s/%s", repoDownload, version, checksumsName)
-	resp, err := updateClient.Get(url)
+	resp, err := get(ctx, url)
 	if err != nil {
 		return "", err
 	}
@@ -105,8 +117,8 @@ func fetchExpectedChecksum(version, assetName string) (string, error) {
 // its path. The file is kept only if its SHA-256 matches wantSum. Staging in
 // the destination directory keeps the later rename on one filesystem, so the
 // swap is atomic.
-func downloadVerified(url, dstDir, wantSum string) (string, error) {
-	resp, err := updateClient.Get(url)
+func downloadVerified(ctx context.Context, url, dstDir, wantSum string) (string, error) {
+	resp, err := get(ctx, url)
 	if err != nil {
 		return "", err
 	}
@@ -169,10 +181,13 @@ var updateCmd = &cobra.Command{
 		}
 		defer w.Close()
 
+		ctx, stop := commandContext()
+		defer stop()
+
 		w.Highlightf("[*] Current version: v%s", version)
 		w.Section("Checking for updates...")
 
-		latest, err := fetchLatestVersion()
+		latest, err := fetchLatestVersion(ctx)
 		if err != nil {
 			return fmt.Errorf("could not check for updates: %w", err)
 		}
@@ -191,13 +206,13 @@ var updateCmd = &cobra.Command{
 
 		assetName := fmt.Sprintf("sek_%s_%s", runtime.GOOS, runtime.GOARCH)
 
-		wantSum, err := fetchExpectedChecksum(latest, assetName)
+		wantSum, err := fetchExpectedChecksum(ctx, latest, assetName)
 		if err != nil {
 			return fmt.Errorf("cannot verify download: %w", err)
 		}
 
 		url := fmt.Sprintf("%s/v%s/%s", repoDownload, latest, assetName)
-		tmpName, err := downloadVerified(url, filepath.Dir(execPath), wantSum)
+		tmpName, err := downloadVerified(ctx, url, filepath.Dir(execPath), wantSum)
 		if err != nil {
 			if os.IsPermission(err) {
 				return fmt.Errorf("permission denied — try: sudo sek update")
