@@ -203,9 +203,9 @@ func match(sig Signature, header http.Header, cookies map[string]bool, body stri
 		return "", true
 	}
 
-	// body is already lower-cased by the caller and every Body pattern in the
-	// table is written lower-case (TestBodyPatternsAreLowercase enforces it), so
-	// there is nothing to fold here.
+	// body is already lower-cased by Fingerprint and every Body pattern in the
+	// table is written lower-case (TestSignaturePatternsAreLowercase enforces
+	// it), so there is nothing to fold here.
 	for _, pattern := range sig.Body {
 		if strings.Contains(body, pattern) {
 			return "", true

@@ -3,7 +3,6 @@
 package dnsx
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -22,12 +21,6 @@ func (e *RcodeError) Error() string {
 		return s
 	}
 	return fmt.Sprintf("RCODE %d", e.Rcode)
-}
-
-// IsNameError reports whether err is NXDOMAIN.
-func IsNameError(err error) bool {
-	var re *RcodeError
-	return errors.As(err, &re) && re.Rcode == dns.RcodeNameError
 }
 
 // Record is a single DNS answer.
