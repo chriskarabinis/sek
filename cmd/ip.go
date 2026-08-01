@@ -46,13 +46,21 @@ func renderIP(w *output.Writer, res *ipx.Result) {
 		country = fmt.Sprintf("%s (%s)", res.Country, res.CountryCode)
 	}
 
+	// Formatted coordinates are never the empty string, so an address the
+	// service has no fix for used to be shown as a confident "0.0000, 0.0000"
+	// off the coast of Africa. Leave the row out instead.
+	coordinates := ""
+	if res.Latitude != 0 || res.Longitude != 0 {
+		coordinates = fmt.Sprintf("%.4f, %.4f", res.Latitude, res.Longitude)
+	}
+
 	for _, f := range []struct{ label, value string }{
 		{"IP", res.IP},
 		{"Country", country},
 		{"Region", res.Region},
 		{"City", res.City},
 		{"ZIP", res.Zip},
-		{"Coordinates", fmt.Sprintf("%.4f, %.4f", res.Latitude, res.Longitude)},
+		{"Coordinates", coordinates},
 		{"Timezone", res.Timezone},
 		{"ISP", res.ISP},
 		{"Organization", res.Organization},

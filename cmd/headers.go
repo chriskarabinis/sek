@@ -110,11 +110,22 @@ func renderHeaders(w *output.Writer, res *webx.HeadersResult) {
 	}
 }
 
+// truncate shortens s to max characters, ending in an ellipsis. It counts
+// runes, so a value with non-ASCII characters is never cut mid-character, and
+// it tolerates a max too small for the ellipsis instead of slicing out of range.
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	const ellipsis = "..."
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	return s[:max-3] + "..."
+	if max <= len(ellipsis) {
+		return string(runes[:max])
+	}
+	return string(runes[:max-len(ellipsis)]) + ellipsis
 }
 
 func init() {

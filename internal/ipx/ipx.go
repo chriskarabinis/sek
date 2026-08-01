@@ -78,7 +78,12 @@ func Lookup(ctx context.Context, target string) (*Result, error) {
 		return nil, err
 	}
 	if data.Status != "success" {
-		return nil, fmt.Errorf("%s", data.Message)
+		// The service does not always send a message with a failure, and an
+		// error whose text is empty prints as a bare "[!]".
+		if data.Message == "" {
+			return nil, fmt.Errorf("lookup failed for %s", ip)
+		}
+		return nil, fmt.Errorf("lookup failed for %s: %s", ip, data.Message)
 	}
 
 	return &Result{
