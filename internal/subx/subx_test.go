@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -184,21 +185,123 @@ func TestResolveAllEmpty(t *testing.T) {
 	}
 }
 
-// TestResolveAllStopsOnCancel checks that a cancelled context ends dispatch
-// rather than leaving the caller blocked.
-func TestResolveAllStopsOnCancel(t *testing.T) {
+// TestResolveAllCancelsInFlightLookups covers what actually changed about
+// cancellation: the run's context now reaches the resolver.
+//
+// Dispatch already stopped queueing new work on cancel, so the queue was never
+// the problem. The lookups themselves were: net.LookupHost takes no context, so
+// each one already running had to time out on its own before Ctrl+C could take
+// effect. Threading the context through is what makes them abort.
+func TestResolveAllCancelsInFlightLookups(t *testing.T) {
+	observed := make(chan context.Context, 1)
+	release := make(chan struct{})
+
+	restore := stubResolver(t, func(ctx context.Context, _ string) ([]string, error) {
+		select {
+		case observed <- ctx:
+		default:
+		}
+		<-release
+		return nil, ctx.Err()
+	})
+	defer restore()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	hosts := make([]string, 64)
+	for i := range hosts {
+		hosts[i] = fmt.Sprintf("h%d.example.invalid", i)
+	}
+
+	done := make(chan int, 1)
+	go func() { done <- len(ResolveAll(ctx, hosts, SourceCertLog, 4)) }()
+
+	lookupCtx := <-observed // a lookup is running
+	cancel()
+
+	// The context handed to the resolver must observe the cancellation; that is
+	// what lets a real DNS call abort instead of running to its timeout.
+	select {
+	case <-lookupCtx.Done():
+	case <-time.After(5 * time.Second):
+		t.Error("the context passed to the resolver was not cancelled with the run")
+	}
+
+	close(release)
+	select {
+	case n := <-done:
+		if n != len(hosts) {
+			t.Errorf("ResolveAll() returned %d findings, want %d", n, len(hosts))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ResolveAll did not return after its context was cancelled")
+	}
+}
+
+// TestResolveAllDoesNoWorkWhenCancelled documents the guarantee for a context
+// that is already cancelled on entry: not a single lookup is started.
+//
+// This holds without the explicit guard too, since dispatch normally exits
+// before any worker parks on the channel. It pins the contract so a future
+// rewrite of the pool cannot quietly lose it.
+func TestResolveAllDoesNoWorkWhenCancelled(t *testing.T) {
+	var lookups atomic.Int64
+	restore := stubResolver(t, func(context.Context, string) ([]string, error) {
+		lookups.Add(1)
+		return []string{"192.0.2.1"}, nil
+	})
+	defer restore()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+
+	hosts := make([]string, 64)
+	for i := range hosts {
+		hosts[i] = fmt.Sprintf("h%d.example.invalid", i)
+	}
+
+	got := ResolveAll(ctx, hosts, SourceBruteForce, 8)
+
+	if n := lookups.Load(); n != 0 {
+		t.Errorf("ResolveAll started %d lookups on an already-cancelled context, want 0", n)
+	}
+	if len(got) != len(hosts) {
+		t.Fatalf("ResolveAll() returned %d findings, want %d", len(got), len(hosts))
+	}
+	for i, f := range got {
+		if f.Host != hosts[i] || f.Source != SourceBruteForce {
+			t.Errorf("finding %d = %+v, want host %q tagged %q", i, f, hosts[i], SourceBruteForce)
+		}
+	}
+}
+
+// stubResolver swaps the package DNS entry point for the duration of a test.
+func stubResolver(t *testing.T, fn func(context.Context, string) ([]string, error)) func() {
+	t.Helper()
+	prev := resolveHost
+	resolveHost = fn
+	return func() { resolveHost = prev }
+}
+
+// TestResolveAllStopsMidRun covers cancellation arriving after dispatch has
+// begun: the call must still return every host, resolved or not.
+func TestResolveAllStopsMidRun(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
 
 	hosts := make([]string, 200)
 	for i := range hosts {
 		hosts[i] = fmt.Sprintf("h%d.example.invalid", i)
 	}
 
+	go cancel()
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ResolveAll(ctx, hosts, SourceBruteForce, 4)
+		if got := ResolveAll(ctx, hosts, SourceBruteForce, 4); len(got) != len(hosts) {
+			t.Errorf("ResolveAll() returned %d findings, want %d", len(got), len(hosts))
+		}
 	}()
 
 	select {

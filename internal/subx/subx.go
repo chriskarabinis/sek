@@ -200,9 +200,12 @@ func BruteForce(ctx context.Context, domain string, opts Options, wildcard []str
 			go func() {
 				defer wg.Done()
 				for word := range jobs {
+					if ctx.Err() != nil {
+						continue
+					}
 					host := word + "." + domain
-					ips, err := net.LookupHost(host)
-					if err != nil {
+					ips := lookupIPs(ctx, host)
+					if len(ips) == 0 {
 						continue
 					}
 					if isWildcardHit(ips, wildcard) {
@@ -241,7 +244,20 @@ func BruteForce(ctx context.Context, domain string, opts Options, wildcard []str
 
 // LookupIPs resolves a host, returning nil when it does not resolve.
 func LookupIPs(host string) []string {
-	addrs, err := net.LookupHost(host)
+	return lookupIPs(context.Background(), host)
+}
+
+// resolveHost is the single DNS entry point for this package. It is a var so
+// tests can count and control lookups without touching the network.
+var resolveHost = func(ctx context.Context, host string) ([]string, error) {
+	return net.DefaultResolver.LookupHost(ctx, host)
+}
+
+// lookupIPs resolves a host through the context-aware resolver. net.LookupHost
+// takes no context, so a cancelled run had to sit through the full DNS timeout
+// on every lookup already in flight before it could return.
+func lookupIPs(ctx context.Context, host string) []string {
+	addrs, err := resolveHost(ctx, host)
 	if err != nil {
 		return nil
 	}
@@ -259,7 +275,12 @@ func ResolveAll(ctx context.Context, hosts []string, source string, concurrency 
 	for i, h := range hosts {
 		findings[i] = Finding{Host: h, Source: source}
 	}
-	if len(hosts) == 0 {
+	// A context cancelled before the pool starts must do no work at all. The
+	// dispatch select below happens to achieve that today only because no
+	// worker has parked on the channel yet, so the send is never ready; once
+	// one has, Go picks between the send and ctx.Done() at random. State the
+	// guarantee here rather than leaving it to scheduling.
+	if len(hosts) == 0 || ctx.Err() != nil {
 		return findings
 	}
 
@@ -275,7 +296,11 @@ func ResolveAll(ctx context.Context, hosts []string, source string, concurrency 
 		go func() {
 			defer wg.Done()
 			for i := range indices {
-				findings[i].IPs = LookupIPs(findings[i].Host)
+				// Cancellation mid-run drains the queue rather than resolving it.
+				if ctx.Err() != nil {
+					continue
+				}
+				findings[i].IPs = lookupIPs(ctx, findings[i].Host)
 			}
 		}()
 	}
