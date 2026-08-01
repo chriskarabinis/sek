@@ -138,28 +138,42 @@ func matchProvider(host string) string {
 	return ""
 }
 
+// Known holds records a caller has already looked up, so platform detection
+// does not repeat queries the caller just made. A nil field means "not
+// fetched"; detection queries for it itself.
+type Known struct {
+	NS    []Record
+	CNAME []Record
+	A     []Record
+}
+
 // DetectPlatform infers the hosting or CDN provider, checking nameservers
 // first, then the registrable domain's nameservers, then CNAME targets, and
 // finally the address ranges.
-func (r *Resolver) DetectPlatform(domain string) string {
-	if p := r.platformFromNS(domain); p != "" {
+//
+// Records already in known are reused rather than queried again; pass nil to
+// have every lookup run. `sek dns` without -t asks for NS, CNAME and A anyway,
+// and repeating them here cost three extra round-trips on every run.
+func (r *Resolver) DetectPlatform(domain string, known *Known) string {
+	if known == nil {
+		known = &Known{}
+	}
+
+	if p := matchAny(r.records(known.NS, domain, (*Resolver).NS)); p != "" {
 		return p
 	}
+	// The registrable domain is only worth a second query when it differs.
 	if root := RootDomain(domain); root != domain {
-		if p := r.platformFromNS(root); p != "" {
+		ns, _ := r.NS(root)
+		if p := matchAny(ns); p != "" {
 			return p
 		}
 	}
-
-	cnames, _ := r.CNAME(domain)
-	for _, rec := range cnames {
-		if p := matchProvider(rec.Value); p != "" {
-			return p
-		}
+	if p := matchAny(r.records(known.CNAME, domain, (*Resolver).CNAME)); p != "" {
+		return p
 	}
 
-	addrs, _ := r.A(domain)
-	for _, rec := range addrs {
+	for _, rec := range r.records(known.A, domain, (*Resolver).A) {
 		if p := providerForIP(rec.Value); p != "" {
 			return p
 		}
@@ -167,9 +181,18 @@ func (r *Resolver) DetectPlatform(domain string) string {
 	return ""
 }
 
-func (r *Resolver) platformFromNS(domain string) string {
-	ns, _ := r.NS(domain)
-	for _, rec := range ns {
+// records returns cached if the caller supplied it, otherwise runs the lookup.
+func (r *Resolver) records(cached []Record, domain string, lookup func(*Resolver, string) ([]Record, error)) []Record {
+	if cached != nil {
+		return cached
+	}
+	out, _ := lookup(r, domain)
+	return out
+}
+
+// matchAny returns the first provider named by any record value.
+func matchAny(records []Record) string {
+	for _, rec := range records {
 		if p := matchProvider(rec.Value); p != "" {
 			return p
 		}

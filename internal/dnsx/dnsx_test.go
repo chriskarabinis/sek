@@ -3,6 +3,7 @@ package dnsx
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -172,5 +173,40 @@ func TestProviderForIP(t *testing.T) {
 				t.Errorf("providerForIP(%q) = %q, want %q", tt.ip, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestMatchAny covers picking a provider out of a set of records.
+func TestMatchAny(t *testing.T) {
+	records := []Record{
+		{Type: "NS", Value: "ns1.example.com"},
+		{Type: "NS", Value: "kate.ns.cloudflare.com"},
+	}
+	if got := matchAny(records); got != "Cloudflare" {
+		t.Errorf("matchAny() = %q, want Cloudflare", got)
+	}
+	if got := matchAny([]Record{{Type: "NS", Value: "ns1.example.com"}}); got != "" {
+		t.Errorf("matchAny() = %q, want empty for an unrecognised nameserver", got)
+	}
+	if got := matchAny(nil); got != "" {
+		t.Errorf("matchAny(nil) = %q, want empty", got)
+	}
+}
+
+// TestKnownRecordsAvoidLookups checks that supplying records skips the query.
+// A resolver pointed at an unroutable address would fail every lookup, so a
+// result at all proves the cached records were used.
+func TestKnownRecordsAvoidLookups(t *testing.T) {
+	r := &Resolver{Server: "127.0.0.1:1", Timeout: time.Millisecond}
+
+	got := r.records([]Record{{Type: "NS", Value: "kate.ns.cloudflare.com"}}, "example.com",
+		(*Resolver).NS)
+	if len(got) != 1 || got[0].Value != "kate.ns.cloudflare.com" {
+		t.Fatalf("records() = %v, want the supplied record", got)
+	}
+
+	// A nil slice means "not fetched", so the lookup runs and fails harmlessly.
+	if got := r.records(nil, "example.com", (*Resolver).NS); len(got) != 0 {
+		t.Errorf("records(nil) = %v, want no records from a dead resolver", got)
 	}
 }
