@@ -95,9 +95,6 @@ func colorEnabled(f *os.File, noColor bool) bool {
 	return stat.Mode()&os.ModeCharDevice != 0
 }
 
-// Format returns the writer's render mode.
-func (w *Writer) Format() Format { return w.format }
-
 // IsJSON reports whether the writer is emitting JSON.
 func (w *Writer) IsJSON() bool { return w.format == FormatJSON }
 
@@ -129,9 +126,6 @@ func (w *Writer) write(line string, highlight bool) {
 
 // Line writes plain text.
 func (w *Writer) Line(s string) { w.write(s, false) }
-
-// Linef writes plain formatted text.
-func (w *Writer) Linef(format string, a ...any) { w.write(fmt.Sprintf(format, a...), false) }
 
 // Highlight writes text that should stand out on a colour terminal.
 func (w *Writer) Highlight(s string) { w.write(s, true) }
