@@ -3,6 +3,8 @@ package dnsx
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"net/netip"
+	"sort"
 	"strings"
 )
 
@@ -51,23 +53,78 @@ var knownProviders = []struct {
 	{"hosting.gr", "Hosting.gr (GR)"},
 }
 
-// ipProviders maps IP prefixes to provider names, from the operators' own
-// published ranges.
-var ipProviders = []struct {
-	prefix   string
+// providerRange ties a published network range to the operator that owns it.
+type providerRange struct {
+	net      netip.Prefix
 	provider string
-}{
-	// Cloudflare — official ranges from cloudflare.com/ips
-	{"103.21.244.", "Cloudflare"}, {"103.22.200.", "Cloudflare"}, {"103.31.4.", "Cloudflare"},
-	{"104.16.", "Cloudflare"}, {"104.17.", "Cloudflare"}, {"104.18.", "Cloudflare"},
-	{"104.19.", "Cloudflare"}, {"104.20.", "Cloudflare"}, {"104.21.", "Cloudflare"},
-	{"104.24.", "Cloudflare"}, {"104.25.", "Cloudflare"}, {"104.26.", "Cloudflare"},
-	{"108.162.", "Cloudflare"}, {"141.101.", "Cloudflare"},
-	{"162.158.", "Cloudflare"}, {"162.159.", "Cloudflare"},
-	{"172.64.", "Cloudflare"}, {"172.65.", "Cloudflare"},
-	{"172.66.", "Cloudflare"}, {"172.67.", "Cloudflare"},
-	{"173.245.", "Cloudflare"}, {"188.114.", "Cloudflare"},
-	{"190.93.", "Cloudflare"}, {"197.234.", "Cloudflare"}, {"198.41.", "Cloudflare"},
+}
+
+// providerCIDRs are the ranges checked when nothing else identifies a host.
+//
+// They are matched as real CIDRs rather than as leading-digit strings. The
+// string form silently omitted whole blocks — 104.16.0.0/13 spans 104.16
+// through 104.23, but only 104.16-104.21 were listed, so Cloudflare-fronted
+// sites on 104.22.x and 104.23.x came back as "Custom / Unknown".
+var providerCIDRs = parseRanges(map[string]string{
+	// Cloudflare — official IPv4 list from cloudflare.com/ips-v4
+	"103.21.244.0/22":  "Cloudflare",
+	"103.22.200.0/22":  "Cloudflare",
+	"103.31.4.0/22":    "Cloudflare",
+	"104.16.0.0/13":    "Cloudflare",
+	"104.24.0.0/14":    "Cloudflare",
+	"108.162.192.0/18": "Cloudflare",
+	"131.0.72.0/22":    "Cloudflare",
+	"141.101.64.0/18":  "Cloudflare",
+	"162.158.0.0/15":   "Cloudflare",
+	"172.64.0.0/13":    "Cloudflare",
+	"173.245.48.0/20":  "Cloudflare",
+	"188.114.96.0/20":  "Cloudflare",
+	"190.93.240.0/20":  "Cloudflare",
+	"197.234.240.0/22": "Cloudflare",
+	"198.41.128.0/17":  "Cloudflare",
+	// Cloudflare — official IPv6 list from cloudflare.com/ips-v6
+	"2400:cb00::/32": "Cloudflare",
+	"2405:8100::/32": "Cloudflare",
+	"2405:b500::/32": "Cloudflare",
+	"2606:4700::/32": "Cloudflare",
+	"2803:f800::/32": "Cloudflare",
+	"2a06:98c0::/29": "Cloudflare",
+	"2c0f:f248::/32": "Cloudflare",
+})
+
+// parseRanges builds the lookup table at init. The input is a compile-time
+// constant, so a malformed prefix is a programming error, not a runtime one.
+//
+// Ranges are sorted most-specific first so a narrow entry always wins over a
+// broader one containing it, and so the answer never depends on Go's
+// randomised map iteration order.
+func parseRanges(table map[string]string) []providerRange {
+	out := make([]providerRange, 0, len(table))
+	for cidr, provider := range table {
+		out = append(out, providerRange{netip.MustParsePrefix(cidr), provider})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if a, b := out[i].net.Bits(), out[j].net.Bits(); a != b {
+			return a > b
+		}
+		return out[i].net.String() < out[j].net.String()
+	})
+	return out
+}
+
+// providerForIP returns the provider owning an address, or "".
+func providerForIP(addr string) string {
+	ip, err := netip.ParseAddr(addr)
+	if err != nil {
+		return ""
+	}
+	ip = ip.Unmap()
+	for _, p := range providerCIDRs {
+		if p.net.Contains(ip) {
+			return p.provider
+		}
+	}
+	return ""
 }
 
 // matchProvider finds the provider whose keyword appears in host.
@@ -103,10 +160,8 @@ func (r *Resolver) DetectPlatform(domain string) string {
 
 	addrs, _ := r.A(domain)
 	for _, rec := range addrs {
-		for _, p := range ipProviders {
-			if strings.HasPrefix(rec.Value, p.prefix) {
-				return p.provider
-			}
+		if p := providerForIP(rec.Value); p != "" {
+			return p
 		}
 	}
 	return ""

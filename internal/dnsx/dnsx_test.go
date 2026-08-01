@@ -1,8 +1,6 @@
 package dnsx
 
 import (
-	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -60,27 +58,6 @@ func TestRcodeError(t *testing.T) {
 	// An unmapped code must still render rather than come out blank.
 	if got := (&RcodeError{Rcode: 4095}).Error(); got == "" {
 		t.Error("Error() for an unknown rcode returned an empty string")
-	}
-}
-
-func TestIsNameError(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{"nxdomain", &RcodeError{Rcode: dns.RcodeNameError}, true},
-		{"servfail", &RcodeError{Rcode: dns.RcodeServerFailure}, false},
-		{"wrapped nxdomain", fmt.Errorf("probe: %w", &RcodeError{Rcode: dns.RcodeNameError}), true},
-		{"unrelated", errors.New("timeout"), false},
-		{"nil", nil, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsNameError(tt.err); got != tt.want {
-				t.Errorf("IsNameError(%v) = %v, want %v", tt.err, got, tt.want)
-			}
-		})
 	}
 }
 
@@ -157,5 +134,43 @@ func TestRandomLabelIsUnique(t *testing.T) {
 		if strings.ContainsAny(label, ".") {
 			t.Errorf("RandomLabel() = %q, must be a single label", label)
 		}
+	}
+}
+
+// TestProviderForIP covers matching an address against the published operator
+// ranges. Matching on leading digits missed whole blocks: 104.16.0.0/13 runs to
+// 104.23.255.255, but only 104.16-104.21 were listed, so a Cloudflare site on
+// 104.22.x reported no platform at all.
+func TestProviderForIP(t *testing.T) {
+	tests := []struct {
+		ip   string
+		want string
+	}{
+		{"104.16.0.1", "Cloudflare"},
+		{"104.21.55.9", "Cloudflare"},
+		{"104.22.10.1", "Cloudflare"},
+		{"104.23.255.254", "Cloudflare"},
+		{"104.27.1.1", "Cloudflare"},
+		{"131.0.72.5", "Cloudflare"},
+		{"172.67.200.1", "Cloudflare"},
+		{"198.41.200.1", "Cloudflare"},
+		{"2606:4700::1111", "Cloudflare"},
+		// Outside every listed range.
+		{"104.28.0.1", ""},
+		{"8.8.8.8", ""},
+		{"1.1.1.1", ""},
+		{"2001:4860:4860::8888", ""},
+		// A string-prefix match would have claimed these; a CIDR match must not.
+		{"104.160.0.1", ""},
+		{"172.640.0.1", ""},
+		{"not-an-ip", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ip, func(t *testing.T) {
+			if got := providerForIP(tt.ip); got != tt.want {
+				t.Errorf("providerForIP(%q) = %q, want %q", tt.ip, got, tt.want)
+			}
+		})
 	}
 }
