@@ -73,3 +73,31 @@ func TestReleaseTagRejectsPseudoVersions(t *testing.T) {
 		}
 	}
 }
+
+// TestTruncate covers shortening a header value for the table. The previous
+// implementation sliced s[:max-3] unguarded, so any max below 3 panicked, and
+// it counted bytes, which could cut a multi-byte character in half.
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		max  int
+		want string
+	}{
+		{"shorter than max", "abc", 10, "abc"},
+		{"exactly max", "abcde", 5, "abcde"},
+		{"longer than max", "abcdefghij", 8, "abcde..."},
+		{"max equals ellipsis", "abcdef", 3, "abc"},
+		{"max below ellipsis", "abcdef", 2, "ab"},
+		{"zero max", "abcdef", 0, ""},
+		{"negative max", "abcdef", -1, ""},
+		{"multi-byte is not split", "ααααααααββ", 8, "ααααα..."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := truncate(tt.in, tt.max); got != tt.want {
+				t.Errorf("truncate(%q, %d) = %q, want %q", tt.in, tt.max, got, tt.want)
+			}
+		})
+	}
+}

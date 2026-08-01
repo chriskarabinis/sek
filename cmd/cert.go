@@ -52,6 +52,9 @@ days, which makes the command usable as a monitoring check.`,
 
 		// Signal expiry through the exit code so cron and CI can act on it.
 		if certExpiryDays > 0 && res.ExpiresWithin(certExpiryDays) {
+			if res.Expired() {
+				return fmt.Errorf("certificate for %s expired %d days ago", res.Host, -res.DaysLeft)
+			}
 			return fmt.Errorf("certificate for %s expires in %d days", res.Host, res.DaysLeft)
 		}
 		return nil
