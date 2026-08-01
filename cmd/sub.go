@@ -32,7 +32,6 @@ var subCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			w.Section("Loaded %d words from %s", len(words), subWordlist)
 		}
 
 		ctx, stop := commandContext()
@@ -41,6 +40,10 @@ var subCmd = &cobra.Command{
 		res := &subx.Result{Domain: subDomain, IPs: subx.LookupIPs(subDomain)}
 
 		w.Header("%s  ->  %s", subDomain, joinOr(res.IPs, "N/A"))
+		if subWordlist != "" {
+			w.Section("Loaded %d words from %s", len(words), subWordlist)
+			w.Blank()
+		}
 
 		// Wildcard DNS makes brute force meaningless: every name resolves, so
 		// every word looks like a hit. Detect it first and filter against it.
@@ -60,12 +63,11 @@ var subCmd = &cobra.Command{
 			res.CertLogError = err.Error()
 			w.Warn("crt.sh failed: %s", err)
 		} else {
-			for _, name := range names {
-				if seen[name] {
+			for _, finding := range subx.ResolveAll(ctx, names, subx.SourceCertLog, subConcurrency) {
+				if seen[finding.Host] {
 					continue
 				}
-				seen[name] = true
-				finding := subx.Finding{Host: name, IPs: subx.LookupIPs(name), Source: subx.SourceCertLog}
+				seen[finding.Host] = true
 				res.Findings = append(res.Findings, finding)
 				res.CertLogCount++
 				w.Highlight(formatFinding(finding))

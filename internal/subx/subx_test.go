@@ -1,9 +1,12 @@
 package subx
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestIsWildcardHit covers the filter that makes brute force meaningful on a
@@ -142,5 +145,65 @@ func TestSortedKeys(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("sortedKeys() = %v, want %v", got, want)
 		}
+	}
+}
+
+// TestResolveAllPreservesOrder covers the concurrent resolution of certificate
+// transparency hits. Order must match the input so output stays deterministic,
+// and every host must get an entry even when it does not resolve.
+func TestResolveAllPreservesOrder(t *testing.T) {
+	// .invalid is reserved by RFC 2606 and never resolves, so this exercises the
+	// ordering and tagging without depending on the network.
+	hosts := []string{
+		"a.example.invalid",
+		"b.example.invalid",
+		"c.example.invalid",
+		"d.example.invalid",
+	}
+
+	got := ResolveAll(context.Background(), hosts, SourceCertLog, 3)
+
+	if len(got) != len(hosts) {
+		t.Fatalf("ResolveAll() returned %d findings, want %d", len(got), len(hosts))
+	}
+	for i, f := range got {
+		if f.Host != hosts[i] {
+			t.Errorf("finding %d = %q, want %q — order must follow the input", i, f.Host, hosts[i])
+		}
+		if f.Source != SourceCertLog {
+			t.Errorf("finding %d source = %q, want %q", i, f.Source, SourceCertLog)
+		}
+	}
+}
+
+// TestResolveAllEmpty covers the degenerate input that would otherwise start a
+// pool of zero workers and deadlock.
+func TestResolveAllEmpty(t *testing.T) {
+	if got := ResolveAll(context.Background(), nil, SourceCertLog, 10); len(got) != 0 {
+		t.Errorf("ResolveAll(nil) = %v, want no findings", got)
+	}
+}
+
+// TestResolveAllStopsOnCancel checks that a cancelled context ends dispatch
+// rather than leaving the caller blocked.
+func TestResolveAllStopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	hosts := make([]string, 200)
+	for i := range hosts {
+		hosts[i] = fmt.Sprintf("h%d.example.invalid", i)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ResolveAll(ctx, hosts, SourceBruteForce, 4)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("ResolveAll did not return after its context was cancelled")
 	}
 }

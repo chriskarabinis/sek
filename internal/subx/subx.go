@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -49,7 +50,6 @@ type Result struct {
 type Options struct {
 	Words       []string
 	Concurrency int
-	Timeout     time.Duration
 }
 
 // LoadWordlist reads a newline-separated wordlist, skipping blanks and #
@@ -113,6 +113,9 @@ func isWildcardHit(ips, wildcard []string) bool {
 	return true
 }
 
+// certLogLimit caps how much of a crt.sh answer is decoded.
+const certLogLimit = 64 << 20
+
 type crtEntry struct {
 	NameValue string `json:"name_value"`
 }
@@ -139,9 +142,11 @@ func FetchCertLog(ctx context.Context, domain string) ([]string, error) {
 		return nil, fmt.Errorf("crt.sh returned HTTP %d", resp.StatusCode)
 	}
 
+	// crt.sh answers for a heavily-certificated domain run to hundreds of
+	// megabytes. Cap what is decoded so one unlucky target cannot exhaust memory.
 	var entries []crtEntry
-	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
-		return nil, err
+	if err := json.NewDecoder(io.LimitReader(resp.Body, certLogLimit)).Decode(&entries); err != nil {
+		return nil, fmt.Errorf("cannot parse crt.sh response: %w", err)
 	}
 
 	suffix := "." + domain
@@ -241,6 +246,52 @@ func LookupIPs(host string) []string {
 		return nil
 	}
 	return addrs
+}
+
+// ResolveAll resolves hosts through a bounded worker pool and returns one
+// Finding per host, in input order, tagged with source.
+//
+// Certificate transparency logs routinely return hundreds of names for a
+// domain. Resolving them one at a time meant the command sat blocked on
+// sequential DNS for minutes before printing anything.
+func ResolveAll(ctx context.Context, hosts []string, source string, concurrency int) []Finding {
+	findings := make([]Finding, len(hosts))
+	for i, h := range hosts {
+		findings[i] = Finding{Host: h, Source: source}
+	}
+	if len(hosts) == 0 {
+		return findings
+	}
+
+	if concurrency < 1 {
+		concurrency = 50
+	}
+	workers := min(concurrency, len(hosts))
+
+	indices := make(chan int)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range indices {
+				findings[i].IPs = LookupIPs(findings[i].Host)
+			}
+		}()
+	}
+
+dispatch:
+	for i := range hosts {
+		select {
+		case indices <- i:
+		case <-ctx.Done():
+			break dispatch
+		}
+	}
+	close(indices)
+	wg.Wait()
+
+	return findings
 }
 
 func sortedKeys(set map[string]bool) []string {
