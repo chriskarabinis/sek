@@ -215,6 +215,36 @@ func TestFingerprintDetectsRealAssets(t *testing.T) {
 	}
 }
 
+// TestSignaturePatternsAreLowercase guards the assumption match() relies on:
+// the response body and header values are folded once by the caller, so a
+// pattern written with a capital letter would simply never fire.
+func TestSignaturePatternsAreLowercase(t *testing.T) {
+	for _, sig := range Signatures {
+		if got := strings.ToLower(sig.HeaderVal); got != sig.HeaderVal {
+			t.Errorf("%s: HeaderVal %q is not lower-case", sig.Name, sig.HeaderVal)
+		}
+		for _, pattern := range sig.Body {
+			if got := strings.ToLower(pattern); got != pattern {
+				t.Errorf("%s: body pattern %q is not lower-case", sig.Name, pattern)
+			}
+		}
+	}
+}
+
+// TestSignatureCategoriesAreKnown catches a signature filed under a category
+// the renderer does not list, which would silently drop it from the output.
+func TestSignatureCategoriesAreKnown(t *testing.T) {
+	known := make(map[string]bool, len(Categories))
+	for _, c := range Categories {
+		known[c] = true
+	}
+	for _, sig := range Signatures {
+		if !known[sig.Category] {
+			t.Errorf("%s: category %q is not in Categories", sig.Name, sig.Category)
+		}
+	}
+}
+
 func fingerprintTestServer(t *testing.T, srv *httptest.Server) *TechResult {
 	t.Helper()
 	host := strings.TrimPrefix(srv.URL, "http://")

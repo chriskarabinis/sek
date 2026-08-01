@@ -27,9 +27,10 @@ type githubRelease struct {
 	TagName string `json:"tag_name"`
 }
 
-func httpClient() *http.Client {
-	return &http.Client{Timeout: 60 * time.Second}
-}
+// updateClient is shared across the three requests an update makes — release
+// metadata, checksums, binary — so they reuse one connection to GitHub instead
+// of completing a TLS handshake each.
+var updateClient = &http.Client{Timeout: 60 * time.Second}
 
 // isNewer returns true if b is strictly newer than a (semver: "0.1.2" > "0.1.1")
 func isNewer(current, latest string) bool {
@@ -52,7 +53,7 @@ func isNewer(current, latest string) bool {
 }
 
 func fetchLatestVersion() (string, error) {
-	resp, err := httpClient().Get(repoAPI)
+	resp, err := updateClient.Get(repoAPI)
 	if err != nil {
 		return "", err
 	}
@@ -76,7 +77,7 @@ func fetchLatestVersion() (string, error) {
 // Format is `sha256sum` output: "<hex>  <filename>" per line.
 func fetchExpectedChecksum(version, assetName string) (string, error) {
 	url := fmt.Sprintf("%s/v%s/%s", repoDownload, version, checksumsName)
-	resp, err := httpClient().Get(url)
+	resp, err := updateClient.Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -105,7 +106,7 @@ func fetchExpectedChecksum(version, assetName string) (string, error) {
 // the destination directory keeps the later rename on one filesystem, so the
 // swap is atomic.
 func downloadVerified(url, dstDir, wantSum string) (string, error) {
-	resp, err := httpClient().Get(url)
+	resp, err := updateClient.Get(url)
 	if err != nil {
 		return "", err
 	}

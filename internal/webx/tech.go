@@ -85,7 +85,7 @@ var Signatures = []Signature{
 	{Name: "Bootstrap", Category: "JS Library", Body: []string{"bootstrap.css", "bootstrap.min.css", "bootstrap.min.js", "bootstrap.bundle"}},
 	{Name: "Tailwind CSS", Category: "JS Library", Body: []string{"tailwind.css", "tailwind.min.css", "cdn.tailwindcss.com"}},
 	{Name: "Font Awesome", Category: "JS Library", Body: []string{"font-awesome.css", "fontawesome.com", "fa-solid"}},
-	{Name: "GSAP", Category: "JS Library", Body: []string{"gsap.min.js", "gsap.js", "TweenMax"}},
+	{Name: "GSAP", Category: "JS Library", Body: []string{"gsap.min.js", "gsap.js", "tweenmax"}},
 
 	// Analytics
 	{Name: "Google Analytics", Category: "Analytics", Body: []string{"google-analytics.com", "gtag(", "googletagmanager.com/gtag"}},
@@ -203,8 +203,11 @@ func match(sig Signature, header http.Header, cookies map[string]bool, body stri
 		return "", true
 	}
 
+	// body is already lower-cased by the caller and every Body pattern in the
+	// table is written lower-case (TestBodyPatternsAreLowercase enforces it), so
+	// there is nothing to fold here.
 	for _, pattern := range sig.Body {
-		if strings.Contains(body, strings.ToLower(pattern)) {
+		if strings.Contains(body, pattern) {
 			return "", true
 		}
 	}
