@@ -215,9 +215,10 @@ func TestFingerprintDetectsRealAssets(t *testing.T) {
 	}
 }
 
-// TestSignaturePatternsAreLowercase guards the assumption match() relies on:
-// the response body and header values are folded once by the caller, so a
-// pattern written with a capital letter would simply never fire.
+// TestSignaturePatternsAreLowercase guards the assumption match() relies on.
+// Fingerprint folds the response body before calling match, and match folds
+// each header value before comparing it against HeaderVal — but neither folds
+// the table, so a pattern written with a capital letter would never fire.
 func TestSignaturePatternsAreLowercase(t *testing.T) {
 	for _, sig := range Signatures {
 		if got := strings.ToLower(sig.HeaderVal); got != sig.HeaderVal {

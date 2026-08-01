@@ -65,6 +65,10 @@ type providerRange struct {
 // string form silently omitted whole blocks — 104.16.0.0/13 spans 104.16
 // through 104.23, but only 104.16-104.21 were listed, so Cloudflare-fronted
 // sites on 104.22.x and 104.23.x came back as "Custom / Unknown".
+//
+// Operators do republish these lists. Re-check them against the source URLs
+// below when platform detection starts missing a provider it used to identify;
+// a stale prefix here degrades detection quietly rather than failing loudly.
 var providerCIDRs = parseRanges(map[string]string{
 	// Cloudflare — official IPv4 list from cloudflare.com/ips-v4
 	"103.21.244.0/22":  "Cloudflare",
