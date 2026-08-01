@@ -121,14 +121,23 @@ func Query(ctx context.Context, query, server string) (string, error) {
 	return out.String(), scanner.Err()
 }
 
+// registryKey reduces a public suffix to the registry that serves it, which is
+// its last label.
+//
+// Cutting at the first dot instead turned "act.edu.au" into "edu.au", a string
+// that is in neither the built-in table nor IANA's registry, so every
+// three-label suffix fell through to whois.iana.org and came back useless.
+func registryKey(tld string) string {
+	if i := strings.LastIndex(tld, "."); i >= 0 {
+		return tld[i+1:]
+	}
+	return tld
+}
+
 // ServerFor returns the WHOIS server for a TLD, asking IANA when it is not in
 // the built-in table.
 func ServerFor(ctx context.Context, tld string) string {
-	// Multi-label suffixes like co.uk are served by the parent registry.
-	key := tld
-	if _, last, ok := strings.Cut(tld, "."); ok {
-		key = last
-	}
+	key := registryKey(tld)
 	if server, ok := whoisServers[key]; ok {
 		return server
 	}

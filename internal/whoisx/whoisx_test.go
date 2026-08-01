@@ -168,3 +168,37 @@ Name Server: NS1.EXAMPLE.COM`)
 		t.Errorf("NameServers = %v, want the referral's entry", res.NameServers)
 	}
 }
+
+// TestRegistryKey covers reducing a public suffix to the registry that serves
+// it. Cutting at the first dot rather than the last left "edu.au" for
+// "act.edu.au", which matches no registry at all.
+func TestRegistryKey(t *testing.T) {
+	tests := []struct {
+		tld  string
+		want string
+	}{
+		{"com", "com"},
+		{"co.uk", "uk"},
+		{"act.edu.au", "au"},
+		{"nsw.gov.au", "au"},
+		{"com.gr", "gr"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tld, func(t *testing.T) {
+			if got := registryKey(tt.tld); got != tt.want {
+				t.Errorf("registryKey(%q) = %q, want %q", tt.tld, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRegistryKeyResolvesToKnownServer ties the key back to the table: the
+// three-label Australian suffixes must reach the .au registry.
+func TestRegistryKeyResolvesToKnownServer(t *testing.T) {
+	for _, tld := range []string{"au", "com.au", "act.edu.au"} {
+		if server := whoisServers[registryKey(tld)]; server != "whois.auda.org.au" {
+			t.Errorf("%s resolved to %q, want whois.auda.org.au", tld, server)
+		}
+	}
+}
