@@ -204,65 +204,74 @@ dispatch:
 
 // probe connects to one port and classifies the outcome. A timeout means a
 // firewall is dropping packets; an outright refusal means nothing is listening.
+//
+// The connection it opens is handed to the banner grab rather than closed and
+// re-dialled. Every open port used to cost two full TCP handshakes, which on a
+// wide scan of a host with many open ports doubled both the connection count
+// and the time spent waiting on them.
 func probe(ctx context.Context, host string, port int, timeout time.Duration) Port {
-	address := hostPort(host, port)
-
 	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", address)
-	if err == nil {
-		conn.Close()
-		return Port{
-			Port:    port,
-			State:   StateOpen,
-			Service: ServiceName(port),
-			Version: grabVersion(ctx, host, port, timeout),
+	conn, err := dialer.DialContext(ctx, "tcp", hostPort(host, port))
+	if err != nil {
+		// errors.As rather than a bare type assertion: a timeout wrapped by an
+		// intermediate error still means "filtered", not "closed".
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			return Port{Port: port, State: StateFiltered, Service: ServiceName(port)}
 		}
+		return Port{Port: port, State: StateClosed}
 	}
 
-	// errors.As rather than a bare type assertion: a timeout wrapped by an
-	// intermediate error still means "filtered", not "closed".
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return Port{Port: port, State: StateFiltered, Service: ServiceName(port)}
+	return Port{
+		Port:    port,
+		State:   StateOpen,
+		Service: ServiceName(port),
+		Version: grabVersion(ctx, conn, host, port, timeout),
 	}
-	return Port{Port: port, State: StateClosed}
 }
 
 // grabVersion asks an open port to identify itself: an HTTP request for web
-// ports, otherwise whatever banner the service volunteers on connect.
-func grabVersion(ctx context.Context, host string, port int, timeout time.Duration) string {
-	address := hostPort(host, port)
-
+// ports, otherwise whatever banner the service volunteers on connect. It takes
+// ownership of conn and closes it.
+func grabVersion(ctx context.Context, conn net.Conn, host string, port int, timeout time.Duration) string {
 	if tlsPorts[port] {
-		// SNI must be a hostname; sending an IP literal is invalid.
-		serverName := host
-		if net.ParseIP(host) != nil {
-			serverName = ""
-		}
-		dialer := &tls.Dialer{
-			NetDialer: &net.Dialer{Timeout: timeout},
-			Config:    &tls.Config{InsecureSkipVerify: true, ServerName: serverName},
-		}
-		conn, err := dialer.DialContext(ctx, "tcp", address)
-		if err != nil {
-			return ""
-		}
-		defer conn.Close()
-		return httpServerHeader(conn, host, timeout)
-	}
-
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", address)
-	if err != nil {
-		return ""
+		// A TLS port needs a handshake, which cannot be run over a connection
+		// that has already been opened in the clear, so this is the one case
+		// that has to dial again. Release the plaintext socket first.
+		conn.Close()
+		return tlsServerHeader(ctx, host, port, timeout)
 	}
 	defer conn.Close()
 
 	if httpPorts[port] {
 		return httpServerHeader(conn, host, timeout)
 	}
+	return bannerLine(conn, timeout)
+}
 
-	// SSH, FTP, SMTP and friends announce themselves on connect.
+// tlsServerHeader completes a TLS handshake and asks the service behind it for
+// its Server header.
+func tlsServerHeader(ctx context.Context, host string, port int, timeout time.Duration) string {
+	// SNI must be a hostname; sending an IP literal is invalid.
+	serverName := host
+	if net.ParseIP(host) != nil {
+		serverName = ""
+	}
+	dialer := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: timeout},
+		Config:    &tls.Config{InsecureSkipVerify: true, ServerName: serverName},
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", hostPort(host, port))
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	return httpServerHeader(conn, host, timeout)
+}
+
+// bannerLine returns the first line SSH, FTP, SMTP and friends announce on
+// connect.
+func bannerLine(conn net.Conn, timeout time.Duration) string {
 	conn.SetDeadline(time.Now().Add(timeout))
 	buf := make([]byte, 256)
 	n, _ := conn.Read(buf)

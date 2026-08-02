@@ -3,6 +3,7 @@ package scanx
 import (
 	"context"
 	"net"
+	"sync"
 	"testing"
 	"time"
 )
@@ -309,5 +310,43 @@ func TestReadHeaderBlockAcceptsBareLF(t *testing.T) {
 	client.SetDeadline(time.Now().Add(5 * time.Second))
 	if got := extractServerHeader(readHeaderBlock(client)); got != "lighttpd/1.4.55" {
 		t.Errorf("Server header = %q, want %q", got, "lighttpd/1.4.55")
+	}
+}
+
+// TestProbeOpensOneConnectionPerPort pins the connection reuse: the banner grab
+// runs on the socket the probe already opened, so a plain open port costs one
+// handshake rather than two.
+func TestProbeOpensOneConnectionPerPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("cannot listen: %v", err)
+	}
+	defer listener.Close()
+
+	var mu sync.Mutex
+	accepted := 0
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			accepted++
+			mu.Unlock()
+			conn.Close()
+		}
+	}()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	got := probe(context.Background(), "127.0.0.1", port, time.Second)
+	if got.State != StateOpen {
+		t.Fatalf("probe state = %q, want %q", got.State, StateOpen)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if accepted != 1 {
+		t.Errorf("probe made %d connections, want 1", accepted)
 	}
 }
