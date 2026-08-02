@@ -107,6 +107,20 @@ func Query(ctx context.Context, query, server string) (string, error) {
 		conn.SetDeadline(time.Now().Add(20 * time.Second))
 	}
 
+	// DialContext honours ctx only while connecting; the read below is bounded
+	// by the deadline alone. Closing the connection when ctx is done is what
+	// makes Ctrl+C during a slow registry response return at once instead of
+	// sitting out the remaining twenty seconds.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			conn.Close()
+		case <-done:
+		}
+	}()
+
 	if _, err := fmt.Fprintf(conn, "%s\r\n", query); err != nil {
 		return "", err
 	}
@@ -118,7 +132,15 @@ func Query(ctx context.Context, query, server string) (string, error) {
 		out.WriteString(scanner.Text())
 		out.WriteString("\n")
 	}
-	return out.String(), scanner.Err()
+	if err := scanner.Err(); err != nil {
+		// A read aborted by the cancellation above surfaces as "use of closed
+		// network connection", which tells the user nothing. Report the cause.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
+		return out.String(), err
+	}
+	return out.String(), nil
 }
 
 // registryKey reduces a public suffix to the registry that serves it, which is
