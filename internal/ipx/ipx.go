@@ -5,10 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/chriskarabinis/sek/internal/netx"
 )
 
 // endpoint is the free ip-api.com service (45 requests/min, no key). It offers
@@ -53,7 +54,7 @@ type apiResponse struct {
 // Lookup resolves target to an address if needed, then queries the geolocation
 // service for it.
 func Lookup(ctx context.Context, target string) (*Result, error) {
-	ip, err := resolve(target)
+	ip, err := netx.ResolveIP(ctx, target)
 	if err != nil {
 		return nil, err
 	}
@@ -101,22 +102,4 @@ func Lookup(ctx context.Context, target string) (*Result, error) {
 		Organization: data.Org,
 		ASN:          data.AS,
 	}, nil
-}
-
-// resolve returns target unchanged when it is already an IP, otherwise looks it
-// up and prefers an IPv4 answer.
-func resolve(target string) (string, error) {
-	if net.ParseIP(target) != nil {
-		return target, nil
-	}
-	addrs, err := net.LookupHost(target)
-	if err != nil || len(addrs) == 0 {
-		return "", fmt.Errorf("cannot resolve: %s", target)
-	}
-	for _, addr := range addrs {
-		if net.ParseIP(addr).To4() != nil {
-			return addr, nil
-		}
-	}
-	return addrs[0], nil
 }

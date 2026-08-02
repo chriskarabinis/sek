@@ -8,38 +8,6 @@ import (
 	"testing"
 )
 
-func TestResolve(t *testing.T) {
-	tests := []struct {
-		name    string
-		target  string
-		want    string
-		wantErr bool
-	}{
-		{"ipv4 passes through", "8.8.8.8", "8.8.8.8", false},
-		{"ipv6 passes through", "2001:4860:4860::8888", "2001:4860:4860::8888", false},
-		{"loopback name", "localhost", "127.0.0.1", false},
-		{"unresolvable", "this-host-does-not-exist.invalid", "", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolve(tt.target)
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("resolve(%q) = %q, want an error", tt.target, got)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("resolve(%q) returned error: %v", tt.target, err)
-			}
-			if got != tt.want {
-				t.Errorf("resolve(%q) = %q, want %q", tt.target, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestLookup(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

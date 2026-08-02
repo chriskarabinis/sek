@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chriskarabinis/sek/internal/netx"
 )
 
 // Port states.
@@ -122,25 +124,13 @@ func hostPort(host string, port int) string {
 }
 
 // Resolve turns a hostname into an address, preferring IPv4.
-func Resolve(target string) (string, error) {
-	if net.ParseIP(target) != nil {
-		return target, nil
-	}
-	addrs, err := net.LookupHost(target)
-	if err != nil || len(addrs) == 0 {
-		return "", fmt.Errorf("cannot resolve: %s", target)
-	}
-	for _, addr := range addrs {
-		if net.ParseIP(addr).To4() != nil {
-			return addr, nil
-		}
-	}
-	return addrs[0], nil
+func Resolve(ctx context.Context, target string) (string, error) {
+	return netx.ResolveIP(ctx, target)
 }
 
 // Scan resolves target and probes every port on it.
 func Scan(ctx context.Context, target string, ports []int, opts Options) (*Result, error) {
-	ip, err := Resolve(target)
+	ip, err := Resolve(ctx, target)
 	if err != nil {
 		return nil, err
 	}
