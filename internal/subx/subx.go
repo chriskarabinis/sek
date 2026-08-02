@@ -81,11 +81,16 @@ func LoadWordlist(path string) ([]string, error) {
 // DetectWildcardIPs probes random names to find out whether the domain answers
 // for anything. A non-empty result holds the addresses the wildcard resolves
 // to, so brute-force hits pointing only there can be dropped.
-func DetectWildcardIPs(domain string) []string {
+//
+// It goes through the same resolver as every other lookup in this package, so
+// it honours cancellation and is exercised by the tests. Calling net.LookupHost
+// directly meant three uninterruptible lookups ran before `sek sub` had done
+// any of the work the user asked for.
+func DetectWildcardIPs(ctx context.Context, domain string) []string {
 	seen := make(map[string]bool)
 	for i := 0; i < 3; i++ {
-		addrs, err := net.LookupHost(dnsx.RandomLabel() + "." + domain)
-		if err != nil || len(addrs) == 0 {
+		addrs := LookupIPs(ctx, dnsx.RandomLabel()+"."+domain)
+		if len(addrs) == 0 {
 			return nil
 		}
 		for _, ip := range addrs {
@@ -204,7 +209,7 @@ func BruteForce(ctx context.Context, domain string, opts Options, wildcard []str
 						continue
 					}
 					host := word + "." + domain
-					ips := lookupIPs(ctx, host)
+					ips := LookupIPs(ctx, host)
 					if len(ips) == 0 {
 						continue
 					}
@@ -242,21 +247,17 @@ func BruteForce(ctx context.Context, domain string, opts Options, wildcard []str
 	}
 }
 
-// LookupIPs resolves a host, returning nil when it does not resolve.
-func LookupIPs(host string) []string {
-	return lookupIPs(context.Background(), host)
-}
-
 // resolveHost is the single DNS entry point for this package. It is a var so
 // tests can count and control lookups without touching the network.
 var resolveHost = func(ctx context.Context, host string) ([]string, error) {
 	return net.DefaultResolver.LookupHost(ctx, host)
 }
 
-// lookupIPs resolves a host through the context-aware resolver. net.LookupHost
-// takes no context, so a cancelled run had to sit through the full DNS timeout
-// on every lookup already in flight before it could return.
-func lookupIPs(ctx context.Context, host string) []string {
+// LookupIPs resolves a host through the context-aware resolver, returning nil
+// when it does not resolve. net.LookupHost takes no context, so a cancelled run
+// had to sit through the full DNS timeout on every lookup already in flight
+// before it could return.
+func LookupIPs(ctx context.Context, host string) []string {
 	addrs, err := resolveHost(ctx, host)
 	if err != nil {
 		return nil
@@ -300,7 +301,7 @@ func ResolveAll(ctx context.Context, hosts []string, source string, concurrency 
 				if ctx.Err() != nil {
 					continue
 				}
-				findings[i].IPs = lookupIPs(ctx, findings[i].Host)
+				findings[i].IPs = LookupIPs(ctx, findings[i].Host)
 			}
 		}()
 	}

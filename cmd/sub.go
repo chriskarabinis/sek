@@ -37,7 +37,7 @@ var subCmd = &cobra.Command{
 		ctx, stop := commandContext()
 		defer stop()
 
-		res := &subx.Result{Domain: subDomain, IPs: subx.LookupIPs(subDomain)}
+		res := &subx.Result{Domain: subDomain, IPs: subx.LookupIPs(ctx, subDomain)}
 
 		w.Header("%s  ->  %s", subDomain, joinOr(res.IPs, "N/A"))
 		if subWordlist != "" {
@@ -47,7 +47,7 @@ var subCmd = &cobra.Command{
 
 		// Wildcard DNS makes brute force meaningless: every name resolves, so
 		// every word looks like a hit. Detect it first and filter against it.
-		res.WildcardIPs = subx.DetectWildcardIPs(subDomain)
+		res.WildcardIPs = subx.DetectWildcardIPs(ctx, subDomain)
 		if len(res.WildcardIPs) > 0 {
 			w.Warn("Wildcard DNS detected: *.%s  ->  %s", subDomain, strings.Join(res.WildcardIPs, ", "))
 			w.Note("Brute-force hits resolving only to these addresses will be filtered.")

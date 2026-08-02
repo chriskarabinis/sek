@@ -2,9 +2,11 @@ package subx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -308,5 +310,59 @@ func TestResolveAllStopsMidRun(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("ResolveAll did not return after its context was cancelled")
+	}
+}
+
+// TestDetectWildcardIPsUsesTheStubbedResolver pins wildcard detection to the
+// package resolver. It used to call net.LookupHost directly, which meant it hit
+// the real network no matter what the caller had set up, and ignored the
+// context entirely.
+func TestDetectWildcardIPsUsesTheStubbedResolver(t *testing.T) {
+	var queried []string
+	defer stubResolver(t, func(_ context.Context, host string) ([]string, error) {
+		queried = append(queried, host)
+		return []string{"192.0.2.10"}, nil
+	})()
+
+	got := DetectWildcardIPs(context.Background(), "example.com")
+	if len(got) != 1 || got[0] != "192.0.2.10" {
+		t.Errorf("DetectWildcardIPs() = %v, want the wildcard address", got)
+	}
+	if len(queried) != 3 {
+		t.Fatalf("made %d lookups, want 3 random probes", len(queried))
+	}
+	for _, host := range queried {
+		if !strings.HasSuffix(host, ".example.com") || strings.Count(host, ".") != 2 {
+			t.Errorf("probed %q, want a single random label under the domain", host)
+		}
+	}
+}
+
+// A domain with no wildcard answers nothing for a random name.
+func TestDetectWildcardIPsReportsNoWildcard(t *testing.T) {
+	defer stubResolver(t, func(context.Context, string) ([]string, error) {
+		return nil, errors.New("NXDOMAIN")
+	})()
+
+	if got := DetectWildcardIPs(context.Background(), "example.com"); got != nil {
+		t.Errorf("DetectWildcardIPs() = %v, want nil", got)
+	}
+}
+
+// TestDetectWildcardIPsStopsWhenCancelled is the behaviour the context was
+// added for: a cancelled run must not keep probing.
+func TestDetectWildcardIPsStopsWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	defer stubResolver(t, func(ctx context.Context, _ string) ([]string, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return []string{"192.0.2.10"}, nil
+	})()
+
+	if got := DetectWildcardIPs(ctx, "example.com"); got != nil {
+		t.Errorf("DetectWildcardIPs() = %v, want nil for a cancelled context", got)
 	}
 }
