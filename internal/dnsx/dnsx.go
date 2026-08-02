@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -121,22 +122,37 @@ func (r *Resolver) lookup(domain string, qtype uint16, fn func(dns.RR) (Record, 
 	return records, nil
 }
 
-// A returns A and AAAA records together.
+// A returns A and AAAA records together. The two queries are independent, so
+// they run concurrently rather than costing two round-trips in sequence.
 func (r *Resolver) A(domain string) ([]Record, error) {
-	v4, errA := r.lookup(domain, dns.TypeA, func(rr dns.RR) (Record, bool) {
-		a, ok := rr.(*dns.A)
-		if !ok {
-			return Record{}, false
-		}
-		return Record{"A", a.A.String(), a.Hdr.Ttl}, true
-	})
-	v6, errAAAA := r.lookup(domain, dns.TypeAAAA, func(rr dns.RR) (Record, bool) {
-		aaaa, ok := rr.(*dns.AAAA)
-		if !ok {
-			return Record{}, false
-		}
-		return Record{"AAAA", aaaa.AAAA.String(), aaaa.Hdr.Ttl}, true
-	})
+	var (
+		v4, v6        []Record
+		errA, errAAAA error
+		wg            sync.WaitGroup
+	)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		v4, errA = r.lookup(domain, dns.TypeA, func(rr dns.RR) (Record, bool) {
+			a, ok := rr.(*dns.A)
+			if !ok {
+				return Record{}, false
+			}
+			return Record{"A", a.A.String(), a.Hdr.Ttl}, true
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		v6, errAAAA = r.lookup(domain, dns.TypeAAAA, func(rr dns.RR) (Record, bool) {
+			aaaa, ok := rr.(*dns.AAAA)
+			if !ok {
+				return Record{}, false
+			}
+			return Record{"AAAA", aaaa.AAAA.String(), aaaa.Hdr.Ttl}, true
+		})
+	}()
+	wg.Wait()
 
 	records := append(v4, v6...)
 	// Having only one address family is normal, so report a failure only when
@@ -232,26 +248,44 @@ var dkimSelectors = []string{
 // EmailSecurity collects SPF, DMARC and any DKIM keys found at common
 // selectors. Every lookup here is a probe whose absence is a valid answer, so
 // it never reports an error.
+//
+// The probes are independent and there are twelve of them, so they run
+// concurrently. Sequentially, a domain publishing no DKIM at all — the common
+// case, since the selector list is guesswork — paid ten round-trips to learn
+// nothing, and a resolver that blackholes unknown names charged the full
+// timeout for each. Answers are collected by index so the report keeps its
+// fixed SPF, DMARC, selector order.
 func (r *Resolver) EmailSecurity(domain string) ([]Record, error) {
-	var records []Record
+	names := make([]string, 0, len(dkimSelectors)+2)
+	names = append(names, domain, "_dmarc."+domain)
+	for _, sel := range dkimSelectors {
+		names = append(names, sel+"._domainkey."+domain)
+	}
 
-	spf, _ := r.TXT(domain)
-	for _, txt := range spf {
+	answers := make([][]Record, len(names))
+	var wg sync.WaitGroup
+	for i, name := range names {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			answers[i], _ = r.TXT(name)
+		}()
+	}
+	wg.Wait()
+
+	var records []Record
+	for _, txt := range answers[0] {
 		if strings.HasPrefix(txt.Value, "v=spf1") {
 			records = append(records, Record{"SPF", txt.Value, txt.TTL})
 		}
 	}
-
-	dmarc, _ := r.TXT("_dmarc." + domain)
-	for _, txt := range dmarc {
+	for _, txt := range answers[1] {
 		if strings.HasPrefix(txt.Value, "v=DMARC1") {
 			records = append(records, Record{"DMARC", txt.Value, txt.TTL})
 		}
 	}
-
-	for _, sel := range dkimSelectors {
-		keys, _ := r.TXT(sel + "._domainkey." + domain)
-		for _, txt := range keys {
+	for i, sel := range dkimSelectors {
+		for _, txt := range answers[i+2] {
 			if strings.Contains(txt.Value, "v=DKIM1") {
 				records = append(records, Record{"DKIM", fmt.Sprintf("[%s] %s", sel, txt.Value), txt.TTL})
 			}
