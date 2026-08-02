@@ -296,19 +296,26 @@ func (r *Resolver) EmailSecurity(domain string) ([]Record, error) {
 }
 
 // Reverse resolves an IP address to its PTR names.
-func Reverse(ip string) ([]Record, error) {
+//
+// It queries the resolver's own server. Going through net.LookupAddr always
+// used the system resolver, so `sek dns -r <ip> -s <server>` silently ignored
+// the server it was told to ask — and answered from a different one than every
+// other lookup the tool makes.
+func (r *Resolver) Reverse(ip string) ([]Record, error) {
 	if net.ParseIP(ip) == nil {
 		return nil, fmt.Errorf("not an IP address: %s", ip)
 	}
-	names, err := net.LookupAddr(ip)
+	arpa, err := dns.ReverseAddr(ip)
 	if err != nil {
 		return nil, err
 	}
-	var records []Record
-	for _, n := range names {
-		records = append(records, Record{Type: "PTR", Value: trimDot(n)})
-	}
-	return records, nil
+	return r.lookup(arpa, dns.TypePTR, func(rr dns.RR) (Record, bool) {
+		ptr, ok := rr.(*dns.PTR)
+		if !ok {
+			return Record{}, false
+		}
+		return Record{"PTR", trimDot(ptr.Ptr), ptr.Hdr.Ttl}, true
+	})
 }
 
 // Wildcard returns the address a random subdomain resolves to, or "" when the

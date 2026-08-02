@@ -47,7 +47,7 @@ var dnsCmd = &cobra.Command{
 		resolver := dnsx.NewResolver(dnsServer)
 
 		if dnsReverse != "" {
-			return runReverseDNS(w, dnsReverse)
+			return runReverseDNS(w, resolver, dnsReverse)
 		}
 		if dnsDomain == "" {
 			return fmt.Errorf("domain is required, use -d <domain>")
@@ -101,13 +101,21 @@ var dnsCmd = &cobra.Command{
 	},
 }
 
-func runReverseDNS(w *output.Writer, ip string) error {
-	records, err := dnsx.Reverse(ip)
-	if err != nil && len(records) == 0 {
+func runReverseDNS(w *output.Writer, resolver *dnsx.Resolver, ip string) error {
+	records, err := resolver.Reverse(ip)
+	// An address with no PTR answers NOERROR and no records, which is not an
+	// error but is still nothing to show. Both outcomes read the same to the
+	// user, so they are reported the same way.
+	if len(records) == 0 {
 		if w.IsJSON() {
+			section := dnsx.Section{Title: "PTR"}
+			if err != nil {
+				section.Error = err.Error()
+			}
 			return w.JSON(&dnsx.Result{
 				Domain:   ip,
-				Sections: []dnsx.Section{{Title: "PTR", Error: err.Error()}},
+				Server:   resolver.Server,
+				Sections: []dnsx.Section{section},
 			})
 		}
 		w.Header("Reverse DNS for: %s", ip)
@@ -116,7 +124,11 @@ func runReverseDNS(w *output.Writer, ip string) error {
 		return nil
 	}
 
-	res := &dnsx.Result{Domain: ip, Sections: []dnsx.Section{{Title: "PTR", Records: records}}}
+	res := &dnsx.Result{
+		Domain:   ip,
+		Server:   resolver.Server,
+		Sections: []dnsx.Section{{Title: "PTR", Records: records}},
+	}
 	if w.IsJSON() {
 		return w.JSON(res)
 	}
