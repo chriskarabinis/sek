@@ -3,6 +3,7 @@
 package scanx
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -278,10 +279,40 @@ func grabVersion(ctx context.Context, host string, port int, timeout time.Durati
 func httpServerHeader(conn net.Conn, host string, timeout time.Duration) string {
 	conn.SetDeadline(time.Now().Add(timeout))
 	fmt.Fprintf(conn, "HEAD / HTTP/1.0\r\nHost: %s\r\n\r\n", host)
+	return extractServerHeader(readHeaderBlock(conn))
+}
 
-	buf := make([]byte, 1024)
-	n, _ := conn.Read(buf)
-	return extractServerHeader(string(buf[:n]))
+// headerBlockLimit caps how much of a response is buffered while looking for
+// the end of the header block.
+const headerBlockLimit = 8 << 10
+
+// readHeaderBlock reads a response up to the blank line that ends its headers.
+//
+// One Read is not enough: a response header block routinely arrives across
+// several segments, and taking only the first one dropped the Server value for
+// every server that did not fit it into the initial packet — reported as "no
+// version" rather than as the failure it was. The deadline the caller set is
+// what bounds the loop.
+func readHeaderBlock(conn net.Conn) string {
+	var buf []byte
+	chunk := make([]byte, 512)
+	for len(buf) < headerBlockLimit {
+		n, err := conn.Read(chunk)
+		if n > 0 {
+			buf = append(buf, chunk[:n]...)
+			// Tolerate bare LF separators; some embedded servers send them.
+			if i := bytes.Index(buf, []byte("\r\n\r\n")); i >= 0 {
+				return string(buf[:i])
+			}
+			if i := bytes.Index(buf, []byte("\n\n")); i >= 0 {
+				return string(buf[:i])
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	return string(buf)
 }
 
 // extractServerHeader pulls the Server value out of a raw HTTP response.

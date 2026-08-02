@@ -239,3 +239,75 @@ func equal(a, b []int) bool {
 	}
 	return true
 }
+
+// TestReadHeaderBlockSpansReads is the regression test for the banner grab
+// taking a single Read: a server that dribbles its header block out across
+// several writes had its Server value dropped, and the port was reported with
+// no version at all.
+func TestReadHeaderBlockSpansReads(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+
+	go func() {
+		defer server.Close()
+		for _, part := range []string{
+			"HTTP/1.1 200 OK\r\n",
+			"Date: Mon, 02 Jan 2006 15:04:05 GMT\r\n",
+			"Server: ngi",
+			"nx/1.24.0\r\n",
+			"Content-Type: text/html\r\n\r\n",
+		} {
+			if _, err := server.Write([]byte(part)); err != nil {
+				return
+			}
+		}
+	}()
+
+	client.SetDeadline(time.Now().Add(5 * time.Second))
+	got := extractServerHeader(readHeaderBlock(client))
+	if got != "nginx/1.24.0" {
+		t.Errorf("Server header = %q, want %q", got, "nginx/1.24.0")
+	}
+}
+
+// readHeaderBlock must stop at the end of the headers rather than draining the
+// body, so a keep-alive response does not cost the whole timeout.
+func TestReadHeaderBlockStopsAtEndOfHeaders(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+
+	go func() {
+		server.Write([]byte("HTTP/1.1 200 OK\r\nServer: caddy\r\n\r\n"))
+		// Left open, as a keep-alive server would: no EOF is coming.
+	}()
+
+	client.SetDeadline(time.Now().Add(5 * time.Second))
+	done := make(chan string, 1)
+	go func() { done <- extractServerHeader(readHeaderBlock(client)) }()
+
+	select {
+	case got := <-done:
+		if got != "caddy" {
+			t.Errorf("Server header = %q, want %q", got, "caddy")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("readHeaderBlock kept reading past the end of the headers")
+	}
+	server.Close()
+}
+
+// A bare-LF header block is unusual but real on embedded servers.
+func TestReadHeaderBlockAcceptsBareLF(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+
+	go func() {
+		defer server.Close()
+		server.Write([]byte("HTTP/1.0 200 OK\nServer: lighttpd/1.4.55\n\nbody"))
+	}()
+
+	client.SetDeadline(time.Now().Add(5 * time.Second))
+	if got := extractServerHeader(readHeaderBlock(client)); got != "lighttpd/1.4.55" {
+		t.Errorf("Server header = %q, want %q", got, "lighttpd/1.4.55")
+	}
+}
