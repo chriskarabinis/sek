@@ -129,15 +129,6 @@ func Resolve(ctx context.Context, target string) (string, error) {
 	return netx.ResolvePreferIPv4(ctx, target)
 }
 
-// Scan resolves target and probes every port on it.
-func Scan(ctx context.Context, target string, ports []int, opts Options) (*Result, error) {
-	ip, err := Resolve(ctx, target)
-	if err != nil {
-		return nil, err
-	}
-	return ScanAddr(ctx, target, ip, ports, opts)
-}
-
 // ScanAddr probes every port on ip through a fixed worker pool, labelling the
 // result with target. Callers that have already resolved the name use this so
 // the lookup is not repeated — and so the address they reported to the user is

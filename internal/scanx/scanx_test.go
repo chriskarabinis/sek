@@ -217,12 +217,17 @@ func TestScanFindsOpenAndClosedPorts(t *testing.T) {
 	openPort := listener.Addr().(*net.TCPAddr).Port
 	closedPort := freePort(t, "127.0.0.1")
 
-	res, err := Scan(context.Background(), "127.0.0.1", []int{openPort, closedPort}, Options{
+	ip, err := Resolve(context.Background(), "127.0.0.1")
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	res, err := ScanAddr(context.Background(), "127.0.0.1", ip, []int{openPort, closedPort}, Options{
 		Timeout:     2 * time.Second,
 		Concurrency: 2,
 	})
 	if err != nil {
-		t.Fatalf("Scan returned error: %v", err)
+		t.Fatalf("ScanAddr returned error: %v", err)
 	}
 
 	states := map[int]string{}
@@ -253,12 +258,12 @@ func TestScanIPv6(t *testing.T) {
 
 	port := listener.Addr().(*net.TCPAddr).Port
 
-	res, err := Scan(context.Background(), "::1", []int{port}, Options{
+	res, err := ScanAddr(context.Background(), "::1", "::1", []int{port}, Options{
 		Timeout:     2 * time.Second,
 		Concurrency: 1,
 	})
 	if err != nil {
-		t.Fatalf("Scan returned error: %v", err)
+		t.Fatalf("ScanAddr returned error: %v", err)
 	}
 	if len(res.Ports) != 1 || res.Ports[0].State != StateOpen {
 		t.Errorf("IPv6 scan reported %+v, want one open port", res.Ports)
@@ -271,12 +276,12 @@ func TestScanRespectsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := Scan(ctx, "127.0.0.1", AllPorts(), Options{
+	_, err := ScanAddr(ctx, "127.0.0.1", "127.0.0.1", AllPorts(), Options{
 		Timeout:     time.Second,
 		Concurrency: 8,
 	})
 	if err == nil {
-		t.Error("Scan with a cancelled context returned no error")
+		t.Error("ScanAddr with a cancelled context returned no error")
 	}
 }
 
