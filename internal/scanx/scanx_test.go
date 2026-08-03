@@ -2,6 +2,7 @@ package scanx
 
 import (
 	"context"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -96,6 +97,79 @@ func TestExtractServerHeader(t *testing.T) {
 	}
 }
 
+// TestHTTPServerHeaderSpansReads is the regression test for the banner grab
+// issuing a single conn.Read: a server that flushed its status line separately
+// from its headers had its Server value dropped, and the port was reported with
+// no version.
+func TestHTTPServerHeaderSpansReads(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("cannot listen: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Deliberately split: the status line lands in one segment and the
+		// headers in the next, which is exactly what the old code missed.
+		io.WriteString(conn, "HTTP/1.1 200 OK\r\n")
+		time.Sleep(50 * time.Millisecond)
+		io.WriteString(conn, "Server: nginx/1.24.0\r\nDate: today\r\n\r\n")
+	}()
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("cannot dial: %v", err)
+	}
+	defer conn.Close()
+
+	if got := httpServerHeader(conn, "127.0.0.1", 2*time.Second); got != "nginx/1.24.0" {
+		t.Errorf("httpServerHeader() = %q, want %q", got, "nginx/1.24.0")
+	}
+}
+
+// TestHTTPServerHeaderStopsAtHeaderEnd pins the other half of the contract: a
+// server that ignores the HTTP/1.0 request and holds the connection open must
+// not cost a full timeout, so the read stops at the blank line rather than EOF.
+func TestHTTPServerHeaderStopsAtHeaderEnd(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("cannot listen: %v", err)
+	}
+	defer listener.Close()
+
+	held := make(chan struct{})
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		io.WriteString(conn, "HTTP/1.1 200 OK\r\nServer: Caddy\r\n\r\n")
+		<-held // keep the connection open, as a keep-alive server would
+	}()
+	defer close(held)
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("cannot dial: %v", err)
+	}
+	defer conn.Close()
+
+	start := time.Now()
+	got := httpServerHeader(conn, "127.0.0.1", 5*time.Second)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("httpServerHeader() waited %v for a connection held open, want a prompt return", elapsed)
+	}
+	if got != "Caddy" {
+		t.Errorf("httpServerHeader() = %q, want %q", got, "Caddy")
+	}
+}
+
 // TestHostPort covers the address construction that broke IPv6 scanning. It
 // runs everywhere, unlike the live IPv6 scan below, which needs a v6 stack.
 func TestHostPort(t *testing.T) {
@@ -143,12 +217,17 @@ func TestScanFindsOpenAndClosedPorts(t *testing.T) {
 	openPort := listener.Addr().(*net.TCPAddr).Port
 	closedPort := freePort(t, "127.0.0.1")
 
-	res, err := Scan(context.Background(), "127.0.0.1", []int{openPort, closedPort}, Options{
+	ip, err := Resolve(context.Background(), "127.0.0.1")
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	res, err := ScanAddr(context.Background(), "127.0.0.1", ip, []int{openPort, closedPort}, Options{
 		Timeout:     2 * time.Second,
 		Concurrency: 2,
 	})
 	if err != nil {
-		t.Fatalf("Scan returned error: %v", err)
+		t.Fatalf("ScanAddr returned error: %v", err)
 	}
 
 	states := map[int]string{}
@@ -179,12 +258,12 @@ func TestScanIPv6(t *testing.T) {
 
 	port := listener.Addr().(*net.TCPAddr).Port
 
-	res, err := Scan(context.Background(), "::1", []int{port}, Options{
+	res, err := ScanAddr(context.Background(), "::1", "::1", []int{port}, Options{
 		Timeout:     2 * time.Second,
 		Concurrency: 1,
 	})
 	if err != nil {
-		t.Fatalf("Scan returned error: %v", err)
+		t.Fatalf("ScanAddr returned error: %v", err)
 	}
 	if len(res.Ports) != 1 || res.Ports[0].State != StateOpen {
 		t.Errorf("IPv6 scan reported %+v, want one open port", res.Ports)
@@ -197,12 +276,12 @@ func TestScanRespectsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := Scan(ctx, "127.0.0.1", AllPorts(), Options{
+	_, err := ScanAddr(ctx, "127.0.0.1", "127.0.0.1", AllPorts(), Options{
 		Timeout:     time.Second,
 		Concurrency: 8,
 	})
 	if err == nil {
-		t.Error("Scan with a cancelled context returned no error")
+		t.Error("ScanAddr with a cancelled context returned no error")
 	}
 }
 

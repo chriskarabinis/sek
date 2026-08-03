@@ -2,6 +2,7 @@ package subx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -273,6 +274,60 @@ func TestResolveAllDoesNoWorkWhenCancelled(t *testing.T) {
 		if f.Host != hosts[i] || f.Source != SourceBruteForce {
 			t.Errorf("finding %d = %+v, want host %q tagged %q", i, f, hosts[i], SourceBruteForce)
 		}
+	}
+}
+
+// TestDetectWildcardIPs covers the two answers that matter: a domain that
+// resolves every random name has a wildcard, and one that does not resolve them
+// has none — a partial answer must not be reported as a wildcard, or real
+// findings would be filtered away.
+func TestDetectWildcardIPs(t *testing.T) {
+	t.Run("wildcard", func(t *testing.T) {
+		restore := stubResolver(t, func(context.Context, string) ([]string, error) {
+			return []string{"192.0.2.2", "192.0.2.1"}, nil
+		})
+		defer restore()
+
+		got := DetectWildcardIPs(context.Background(), "example.invalid")
+		if len(got) != 2 || got[0] != "192.0.2.1" || got[1] != "192.0.2.2" {
+			t.Errorf("DetectWildcardIPs() = %v, want the probe addresses, sorted", got)
+		}
+	})
+
+	t.Run("no wildcard", func(t *testing.T) {
+		restore := stubResolver(t, func(context.Context, string) ([]string, error) {
+			return nil, errors.New("NXDOMAIN")
+		})
+		defer restore()
+
+		if got := DetectWildcardIPs(context.Background(), "example.invalid"); got != nil {
+			t.Errorf("DetectWildcardIPs() = %v, want nil", got)
+		}
+	})
+}
+
+// TestDetectWildcardIPsHonoursContext is the regression test for the probes
+// running through net.LookupHost, which takes no context: interrupting `sek sub`
+// during wildcard detection meant waiting out three full DNS timeouts.
+func TestDetectWildcardIPsHonoursContext(t *testing.T) {
+	var cancelled atomic.Int64
+	restore := stubResolver(t, func(ctx context.Context, _ string) ([]string, error) {
+		if ctx.Err() != nil {
+			cancelled.Add(1)
+			return nil, ctx.Err()
+		}
+		return []string{"192.0.2.1"}, nil
+	})
+	defer restore()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if got := DetectWildcardIPs(ctx, "example.invalid"); got != nil {
+		t.Errorf("DetectWildcardIPs() = %v on a cancelled context, want nil", got)
+	}
+	if cancelled.Load() == 0 {
+		t.Error("wildcard probes did not receive the cancelled context")
 	}
 }
 

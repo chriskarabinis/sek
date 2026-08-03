@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -57,21 +58,46 @@ var dnsCmd = &cobra.Command{
 		wanted := strings.ToUpper(strings.TrimSpace(dnsType))
 		all := wanted == ""
 
+		selected := make([]int, 0, len(dnsLookups))
+		for i, l := range dnsLookups {
+			if all || l.key == wanted {
+				selected = append(selected, i)
+			}
+		}
+		if len(selected) == 0 {
+			return fmt.Errorf("unknown record type %q", dnsType)
+		}
+
+		// Each record type is an independent question, so ask them all at once.
+		// Run in sequence, a bare `sek dns` cost the sum of every round-trip,
+		// and the email-security probes alone are a dozen of them.
+		type outcome struct {
+			records []dnsx.Record
+			err     error
+		}
+		outcomes := make([]outcome, len(selected))
+		var wg sync.WaitGroup
+		for n, i := range selected {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				outcomes[n].records, outcomes[n].err = dnsLookups[i].lookup(resolver, dnsDomain)
+			}()
+		}
+		wg.Wait()
+
 		// Records are kept as they come back so platform detection can reuse
 		// them instead of asking the resolver the same questions again.
-		fetched := make(map[string][]dnsx.Record, len(dnsLookups))
-
-		for _, l := range dnsLookups {
-			if !all && l.key != wanted {
-				continue
-			}
-			records, err := l.lookup(resolver, dnsDomain)
-			section := dnsx.Section{Title: l.title, Records: records}
-			if err != nil {
-				section.Error = err.Error()
+		fetched := make(map[string][]dnsx.Record, len(selected))
+		for n, i := range selected {
+			l := dnsLookups[i]
+			section := dnsx.Section{Title: l.title, Records: outcomes[n].records}
+			if outcomes[n].err != nil {
+				section.Error = outcomes[n].err.Error()
 			} else {
 				// A nil entry means "not fetched" to dnsx, so record an empty
 				// non-nil slice for a query that ran and simply found nothing.
+				records := outcomes[n].records
 				if records == nil {
 					records = []dnsx.Record{}
 				}
@@ -80,18 +106,21 @@ var dnsCmd = &cobra.Command{
 			res.Sections = append(res.Sections, section)
 		}
 
-		if !all && len(res.Sections) == 0 {
-			return fmt.Errorf("unknown record type %q", dnsType)
-		}
-
+		// The wildcard probe shares nothing with platform detection, so it runs
+		// alongside it rather than after.
 		if all {
-			res.Wildcard = resolver.Wildcard(dnsDomain)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				res.Wildcard = resolver.Wildcard(dnsDomain)
+			}()
 		}
 		res.Platform = resolver.DetectPlatform(dnsDomain, &dnsx.Known{
 			NS:    fetched["NS"],
 			CNAME: fetched["CNAME"],
 			A:     fetched["A"],
 		})
+		wg.Wait()
 
 		if w.IsJSON() {
 			return w.JSON(res)

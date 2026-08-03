@@ -153,7 +153,7 @@ func build(host, port string, state tls.ConnectionState) *Result {
 	res := &Result{
 		Host:       host,
 		Port:       port,
-		Subject:    leaf.Subject.CommonName,
+		Subject:    certName(leaf),
 		Issuer:     leaf.Issuer.CommonName,
 		IssuerOrg:  strings.Join(leaf.Issuer.Organization, ", "),
 		NotBefore:  leaf.NotBefore.UTC(),
@@ -178,7 +178,9 @@ func build(host, port string, state tls.ConnectionState) *Result {
 }
 
 // certName falls back to the first SAN when a certificate carries no common
-// name, which is increasingly normal for modern issuers.
+// name, which is increasingly normal for modern issuers. The leaf goes through
+// it too: reading its CommonName directly printed an empty "Subject" row for
+// exactly the certificates the chain view was already handling.
 func certName(c *x509.Certificate) string {
 	if c.Subject.CommonName != "" {
 		return c.Subject.CommonName

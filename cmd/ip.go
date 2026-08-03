@@ -41,8 +41,14 @@ var ipCmd = &cobra.Command{
 func renderIP(w *output.Writer, res *ipx.Result) {
 	w.Header("IP Lookup for: %s", res.Target)
 
+	// Both halves are optional. Pairing them unconditionally rendered a code
+	// with no country name as a bare " (GR)", which the empty-value check below
+	// then let through as a real row.
 	country := res.Country
-	if res.CountryCode != "" {
+	switch {
+	case res.Country == "":
+		country = res.CountryCode
+	case res.CountryCode != "":
 		country = fmt.Sprintf("%s (%s)", res.Country, res.CountryCode)
 	}
 

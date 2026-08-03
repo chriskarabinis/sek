@@ -2,6 +2,9 @@ package certx
 
 import (
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"math/big"
 	"testing"
 	"time"
 )
@@ -160,5 +163,65 @@ func TestChainRole(t *testing.T) {
 				t.Errorf("chainRole(%d, %d) = %q, want %q", tt.index, tt.total, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCertName(t *testing.T) {
+	tests := []struct {
+		name string
+		cert *x509.Certificate
+		want string
+	}{
+		{
+			"common name wins",
+			&x509.Certificate{
+				Subject:  pkix.Name{CommonName: "example.com"},
+				DNSNames: []string{"www.example.com"},
+			},
+			"example.com",
+		},
+		{
+			"falls back to the first SAN",
+			&x509.Certificate{DNSNames: []string{"www.example.com", "example.com"}},
+			"www.example.com",
+		},
+		{
+			"falls back to the full subject",
+			&x509.Certificate{Subject: pkix.Name{Organization: []string{"Example Ltd"}}},
+			"O=Example Ltd",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := certName(tt.cert); got != tt.want {
+				t.Errorf("certName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBuildNamesCommonNameLessLeaf is the regression test for Result.Subject
+// reading leaf.Subject.CommonName directly. Certificates without a CN are
+// normal now, and they printed an empty "Subject" row even though the chain
+// view of the same certificate already fell back to the SAN.
+func TestBuildNamesCommonNameLessLeaf(t *testing.T) {
+	leaf := &x509.Certificate{
+		DNSNames:     []string{"example.com", "www.example.com"},
+		Issuer:       pkix.Name{CommonName: "Example CA", Organization: []string{"Example Trust"}},
+		NotBefore:    time.Now().Add(-24 * time.Hour),
+		NotAfter:     daysFromNow(60),
+		SerialNumber: big.NewInt(1),
+	}
+
+	res := build("example.com", "443", tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{leaf},
+		Version:          tls.VersionTLS13,
+	})
+
+	if res.Subject != "example.com" {
+		t.Errorf("Subject = %q, want the first SAN", res.Subject)
+	}
+	if len(res.Chain) != 1 || res.Chain[0].Subject != res.Subject {
+		t.Errorf("chain leaf = %+v, want the same name as Subject %q", res.Chain, res.Subject)
 	}
 }

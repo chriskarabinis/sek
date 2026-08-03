@@ -3,6 +3,7 @@
 package scanx
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -12,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chriskarabinis/sek/internal/netx"
 )
 
 // Port states.
@@ -122,29 +125,8 @@ func hostPort(host string, port int) string {
 }
 
 // Resolve turns a hostname into an address, preferring IPv4.
-func Resolve(target string) (string, error) {
-	if net.ParseIP(target) != nil {
-		return target, nil
-	}
-	addrs, err := net.LookupHost(target)
-	if err != nil || len(addrs) == 0 {
-		return "", fmt.Errorf("cannot resolve: %s", target)
-	}
-	for _, addr := range addrs {
-		if net.ParseIP(addr).To4() != nil {
-			return addr, nil
-		}
-	}
-	return addrs[0], nil
-}
-
-// Scan resolves target and probes every port on it.
-func Scan(ctx context.Context, target string, ports []int, opts Options) (*Result, error) {
-	ip, err := Resolve(target)
-	if err != nil {
-		return nil, err
-	}
-	return ScanAddr(ctx, target, ip, ports, opts)
+func Resolve(ctx context.Context, target string) (string, error) {
+	return netx.ResolvePreferIPv4(ctx, target)
 }
 
 // ScanAddr probes every port on ip through a fixed worker pool, labelling the
@@ -285,13 +267,35 @@ func grabVersion(ctx context.Context, host string, port int, timeout time.Durati
 	return strings.TrimSpace(line)
 }
 
+// headerLimit caps how much of an HTTP response is read while looking for the
+// Server header. The header block of any sane server fits several times over.
+const headerLimit = 8 << 10
+
+// headerEnd terminates an HTTP header block.
+var headerEnd = []byte("\r\n\r\n")
+
 func httpServerHeader(conn net.Conn, host string, timeout time.Duration) string {
 	conn.SetDeadline(time.Now().Add(timeout))
 	fmt.Fprintf(conn, "HEAD / HTTP/1.0\r\nHost: %s\r\n\r\n", host)
 
+	// Keep reading until the header block ends. A single Read returns only what
+	// landed in the first segment, which for plenty of servers is the status
+	// line alone — the Server header then arrived in the next one and was
+	// dropped, so the port was reported with no version at all.
+	//
+	// Stopping at the blank line rather than at EOF matters: a server that
+	// ignores the HTTP/1.0 request and holds the connection open would
+	// otherwise cost a full timeout on every probed port.
+	var raw []byte
 	buf := make([]byte, 1024)
-	n, _ := conn.Read(buf)
-	return extractServerHeader(string(buf[:n]))
+	for len(raw) < headerLimit {
+		n, err := conn.Read(buf)
+		raw = append(raw, buf[:n]...)
+		if err != nil || bytes.Contains(raw, headerEnd) {
+			break
+		}
+	}
+	return extractServerHeader(string(raw))
 }
 
 // extractServerHeader pulls the Server value out of a raw HTTP response.
