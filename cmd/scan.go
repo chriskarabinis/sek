@@ -38,7 +38,7 @@ var scanCmd = &cobra.Command{
 		ctx, stop := commandContext()
 		defer stop()
 
-		ip, err := scanx.Resolve(scanTarget)
+		ip, err := scanx.Resolve(ctx, scanTarget)
 		if err != nil {
 			return err
 		}
