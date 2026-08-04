@@ -318,3 +318,43 @@ func equal(a, b []int) bool {
 	}
 	return true
 }
+
+// TestBannerPortsHaveServiceNames catches a port the scanner knows enough about
+// to speak HTTP or TLS to, but has no name for. 81, 2095 and 2096 were in the
+// banner tables and missing from services, so an open cPanel webmail port came
+// back with its banner grabbed and its service reported as "unknown".
+func TestBannerPortsHaveServiceNames(t *testing.T) {
+	for name, table := range map[string]map[int]bool{"tlsPorts": tlsPorts, "httpPorts": httpPorts} {
+		for port := range table {
+			if got := ServiceName(port); got == "unknown" {
+				t.Errorf("%s lists %d but services has no name for it", name, port)
+			}
+		}
+	}
+}
+
+// A port cannot be both plaintext HTTP and TLS: grabVersion checks tlsPorts
+// first, so an entry in both would silently never be probed in the clear.
+func TestBannerPortTablesDoNotOverlap(t *testing.T) {
+	for port := range tlsPorts {
+		if httpPorts[port] {
+			t.Errorf("port %d is in both tlsPorts and httpPorts", port)
+		}
+	}
+}
+
+// DefaultPorts is the set scanned with no -p, so a repeated entry is a port
+// probed twice on every default run.
+func TestDefaultPortsAreUniqueAndSorted(t *testing.T) {
+	seen := make(map[int]bool, len(DefaultPorts))
+	for i, port := range DefaultPorts {
+		if seen[port] {
+			t.Errorf("DefaultPorts repeats %d", port)
+		}
+		seen[port] = true
+		if i > 0 && port <= DefaultPorts[i-1] {
+			t.Errorf("DefaultPorts is out of order at index %d: %d follows %d",
+				i, port, DefaultPorts[i-1])
+		}
+	}
+}
