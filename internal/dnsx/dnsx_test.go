@@ -211,3 +211,35 @@ func TestKnownRecordsAvoidLookups(t *testing.T) {
 		t.Errorf("records(nil) = %v, want no records from a dead resolver", got)
 	}
 }
+
+// TestPickServer covers choosing a nameserver out of a resolv.conf list. The
+// link-local skip was case-sensitive, and a non-address entry was returned
+// unchecked — either one produced a resolver address that fails every query
+// rather than falling through to the next entry.
+func TestPickServer(t *testing.T) {
+	tests := []struct {
+		name    string
+		servers []string
+		port    string
+		want    string
+	}{
+		{"first usable wins", []string{"1.1.1.1", "8.8.8.8"}, "53", "1.1.1.1:53"},
+		{"non-default port kept", []string{"1.1.1.1"}, "5353", "1.1.1.1:5353"},
+		{"empty port defaults to 53", []string{"1.1.1.1"}, "", "1.1.1.1:53"},
+		{"lower-case link-local skipped", []string{"fe80::1", "1.1.1.1"}, "53", "1.1.1.1:53"},
+		{"upper-case link-local skipped", []string{"FE80::1", "1.1.1.1"}, "53", "1.1.1.1:53"},
+		{"mixed-case link-local skipped", []string{"Fe80::1", "1.1.1.1"}, "53", "1.1.1.1:53"},
+		{"non-address skipped", []string{"not-an-address", "1.1.1.1"}, "53", "1.1.1.1:53"},
+		{"routable ipv6 kept", []string{"2606:4700:4700::1111"}, "53", "[2606:4700:4700::1111]:53"},
+		{"nothing usable", []string{"fe80::1", "garbage"}, "53", ""},
+		{"empty list", nil, "53", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pickServer(tt.servers, tt.port); got != tt.want {
+				t.Errorf("pickServer(%v, %q) = %q, want %q", tt.servers, tt.port, got, tt.want)
+			}
+		})
+	}
+}

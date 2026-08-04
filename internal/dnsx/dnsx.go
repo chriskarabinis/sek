@@ -70,15 +70,37 @@ func serverAddress(custom string) string {
 	}
 
 	if config, err := dns.ClientConfigFromFile("/etc/resolv.conf"); err == nil {
-		for _, srv := range config.Servers {
-			// IPv6 link-local entries carry a zone that miekg/dns will not dial.
-			if strings.HasPrefix(srv, "fe80") {
-				continue
-			}
-			return net.JoinHostPort(srv, config.Port)
+		if srv := pickServer(config.Servers, config.Port); srv != "" {
+			return srv
 		}
 	}
 	return "8.8.8.8:53"
+}
+
+// pickServer returns the first dialable nameserver from a resolv.conf list, or
+// "" when none of them are.
+//
+// Two entries have to be skipped rather than handed to the dialer. IPv6
+// link-local addresses carry a zone that miekg/dns will not dial, and the
+// prefix test for them is case-insensitive because resolv.conf is written by
+// whatever populates it — "FE80::1%eth0" is as valid a spelling as the
+// lower-case one this used to look for. Anything that is not an address at all
+// cannot be dialled either, and returning it unchecked meant one unusable first
+// entry failed every query instead of falling through to the public resolver.
+func pickServer(servers []string, port string) string {
+	if port == "" {
+		port = "53"
+	}
+	for _, srv := range servers {
+		if strings.HasPrefix(strings.ToLower(srv), "fe80") {
+			continue
+		}
+		if net.ParseIP(srv) == nil {
+			continue
+		}
+		return net.JoinHostPort(srv, port)
+	}
+	return ""
 }
 
 // query sends one question, retrying over TCP when the UDP answer is truncated.
