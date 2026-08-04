@@ -264,7 +264,7 @@ sek dns -r <ip>
 |------|------|-------------|
 | `-d` | `--domain` | Target domain (required unless `-r` is used) |
 | `-t` | `--type` | Record type: `A`, `MX`, `NS`, `TXT`, `CNAME`, `SOA`, `CAA`, `EMAIL` (default: all) |
-| `-s` | `--server` | Upstream DNS server (e.g. `8.8.8.8`) |
+| `-s` | `--server` | Upstream DNS server (e.g. `8.8.8.8`), also used by `-r` |
 | `-r` | `--reverse` | Reverse lookup for an IP address |
 
 ```bash

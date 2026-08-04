@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -22,7 +23,7 @@ var (
 var dnsLookups = []struct {
 	key    string
 	title  string
-	lookup func(*dnsx.Resolver, string) ([]dnsx.Record, error)
+	lookup func(*dnsx.Resolver, context.Context, string) ([]dnsx.Record, error)
 }{
 	{"A", "A / AAAA", (*dnsx.Resolver).A},
 	{"MX", "MX", (*dnsx.Resolver).MX},
@@ -45,10 +46,13 @@ var dnsCmd = &cobra.Command{
 		}
 		defer w.Close()
 
+		ctx, stop := commandContext()
+		defer stop()
+
 		resolver := dnsx.NewResolver(dnsServer)
 
 		if dnsReverse != "" {
-			return runReverseDNS(w, dnsReverse)
+			return runReverseDNS(ctx, w, resolver, dnsReverse)
 		}
 		if dnsDomain == "" {
 			return fmt.Errorf("domain is required, use -d <domain>")
@@ -81,7 +85,7 @@ var dnsCmd = &cobra.Command{
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				outcomes[n].records, outcomes[n].err = dnsLookups[i].lookup(resolver, dnsDomain)
+				outcomes[n].records, outcomes[n].err = dnsLookups[i].lookup(resolver, ctx, dnsDomain)
 			}()
 		}
 		wg.Wait()
@@ -112,10 +116,10 @@ var dnsCmd = &cobra.Command{
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				res.Wildcard = resolver.Wildcard(dnsDomain)
+				res.Wildcard = resolver.Wildcard(ctx, dnsDomain)
 			}()
 		}
-		res.Platform = resolver.DetectPlatform(dnsDomain, &dnsx.Known{
+		res.Platform = resolver.DetectPlatform(ctx, dnsDomain, &dnsx.Known{
 			NS:    fetched["NS"],
 			CNAME: fetched["CNAME"],
 			A:     fetched["A"],
@@ -130,13 +134,22 @@ var dnsCmd = &cobra.Command{
 	},
 }
 
-func runReverseDNS(w *output.Writer, ip string) error {
-	records, err := dnsx.Reverse(ip)
-	if err != nil && len(records) == 0 {
+func runReverseDNS(ctx context.Context, w *output.Writer, resolver *dnsx.Resolver, ip string) error {
+	records, err := resolver.Reverse(ctx, ip)
+	// An address with no PTR answers NOERROR and no records, which is not an
+	// error but is equally nothing to show. Keying the empty case off err alone
+	// let that answer through to the success branch and printed a PTR heading
+	// with nothing under it.
+	if len(records) == 0 {
 		if w.IsJSON() {
+			section := dnsx.Section{Title: "PTR"}
+			if err != nil {
+				section.Error = err.Error()
+			}
 			return w.JSON(&dnsx.Result{
 				Domain:   ip,
-				Sections: []dnsx.Section{{Title: "PTR", Error: err.Error()}},
+				Server:   resolver.Server,
+				Sections: []dnsx.Section{section},
 			})
 		}
 		w.Header("Reverse DNS for: %s", ip)
@@ -145,7 +158,11 @@ func runReverseDNS(w *output.Writer, ip string) error {
 		return nil
 	}
 
-	res := &dnsx.Result{Domain: ip, Sections: []dnsx.Section{{Title: "PTR", Records: records}}}
+	res := &dnsx.Result{
+		Domain:   ip,
+		Server:   resolver.Server,
+		Sections: []dnsx.Section{{Title: "PTR", Records: records}},
+	}
 	if w.IsJSON() {
 		return w.JSON(res)
 	}
