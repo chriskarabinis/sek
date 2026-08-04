@@ -169,6 +169,8 @@ func TestFingerprintIgnoresProse(t *testing.T) {
 		w.Write([]byte(`<html><body><article>
 			How to bootstrap a startup. Many still reach for jquery, though
 			tailwind and react changed things, and our angular days are over.
+			We migrated off prestashop and magento last year, and typo3 before
+			that.
 		</article></body></html>`))
 	}))
 	defer srv.Close()
@@ -256,4 +258,25 @@ func fingerprintTestServer(t *testing.T, srv *httptest.Server) *TechResult {
 		t.Fatalf("Fingerprint returned error: %v", err)
 	}
 	return res
+}
+
+// TestFingerprintDetectsPrestaShop is the other half of the prose check for the
+// one signature that still matched a bare product name: a real storefront must
+// still be recognised by what it actually serves.
+func TestFingerprintDetectsPrestaShop(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><head>
+			<link href="/modules/ps_searchbar/ps_searchbar.css" rel="stylesheet">
+			</head><body><script>var prestashop = {"currency":{}};</script></body></html>`))
+	}))
+	defer srv.Close()
+
+	res := fingerprintTestServer(t, srv)
+	for _, tech := range res.Technologies {
+		if tech.Name == "PrestaShop" {
+			return
+		}
+	}
+	t.Errorf("PrestaShop not detected from its own assets; got %+v", res.Technologies)
 }
