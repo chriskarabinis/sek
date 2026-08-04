@@ -9,6 +9,7 @@ var services = map[int]string{
 	53:    "DNS",
 	69:    "TFTP",
 	80:    "HTTP",
+	81:    "HTTP-alt",
 	110:   "POP3",
 	111:   "RPC",
 	135:   "MSRPC",
@@ -33,6 +34,8 @@ var services = map[int]string{
 	2083:  "cPanel HTTPS",
 	2086:  "WHM HTTP",
 	2087:  "WHM HTTPS",
+	2095:  "cPanel Webmail HTTP",
+	2096:  "cPanel Webmail HTTPS",
 	2181:  "ZooKeeper",
 	2222:  "SSH-alt",
 	2375:  "Docker HTTP",
@@ -97,7 +100,10 @@ func ServiceName(port int) string {
 	return "unknown"
 }
 
-// tlsPorts are probed for a banner over TLS.
+// tlsPorts are probed for a banner over TLS. Every entry here and in httpPorts
+// must also name a service above: a port the scanner knows enough about to
+// speak HTTP to it, but reports as "unknown", is a gap in the output rather
+// than an unknown service. TestBannerPortsHaveServiceNames enforces it.
 var tlsPorts = map[int]bool{
 	443: true, 2083: true, 2087: true, 2096: true,
 	4443: true, 5986: true, 6443: true, 7443: true,
@@ -120,7 +126,7 @@ var httpPorts = map[int]bool{
 var DefaultPorts = []int{
 	21, 22, 23, 25, 53, 80, 81, 110, 111, 135, 139, 143, 389,
 	443, 445, 465, 587, 636, 993, 995, 1080, 1194, 1433, 1521,
-	1723, 2049, 2082, 2083, 2086, 2087, 2181, 2222,
+	1723, 2049, 2082, 2083, 2086, 2087, 2095, 2096, 2181, 2222,
 	2375, 2376, 3000, 3306, 3389, 3690, 4443, 4444, 4848, 5000,
 	5432, 5900, 5985, 5986, 6379, 6443, 7001, 7080, 7443, 8000,
 	8008, 8080, 8081, 8082, 8083, 8085, 8086, 8088, 8090, 8180,

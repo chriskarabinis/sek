@@ -66,7 +66,7 @@ var Signatures = []Signature{
 	{Name: "Wix", Category: "CMS", Body: []string{"wixsite.com", "static.parastorage.com"}},
 	{Name: "Squarespace", Category: "CMS", Body: []string{"static.squarespace.com", "squarespace-headers"}},
 	{Name: "Ghost", Category: "CMS", Body: []string{`content="ghost`, "/ghost/api/"}},
-	{Name: "PrestaShop", Category: "CMS", Body: []string{"/modules/ps_", "prestashop"}},
+	{Name: "PrestaShop", Category: "CMS", Body: []string{"/modules/ps_", "var prestashop", "/prestashop/"}},
 	{Name: "TYPO3", Category: "CMS", Body: []string{"typo3conf", "typo3temp"}},
 	{Name: "HubSpot CMS", Category: "CMS", Body: []string{"hubspot.com/hs-fs", "hs-scripts.com"}},
 	{Name: "Webflow", Category: "CMS", Body: []string{"assets.website-files.com", `content="webflow`}},

@@ -1,6 +1,7 @@
 package dnsx
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"net/netip"
@@ -142,6 +143,11 @@ func matchProvider(host string) string {
 	return ""
 }
 
+// Lookup is the shape of the record-fetching methods, as a method expression:
+// the receiver comes first, so the context follows it rather than leading the
+// argument list. Callers select one with, for example, (*Resolver).NS.
+type Lookup func(*Resolver, context.Context, string) ([]Record, error)
+
 // Known holds records a caller has already looked up, so platform detection
 // does not repeat queries the caller just made. A nil field means "not
 // fetched"; detection queries for it itself.
@@ -158,26 +164,26 @@ type Known struct {
 // Records already in known are reused rather than queried again; pass nil to
 // have every lookup run. `sek dns` without -t asks for NS, CNAME and A anyway,
 // and repeating them here cost three extra round-trips on every run.
-func (r *Resolver) DetectPlatform(domain string, known *Known) string {
+func (r *Resolver) DetectPlatform(ctx context.Context, domain string, known *Known) string {
 	if known == nil {
 		known = &Known{}
 	}
 
-	if p := matchAny(r.records(known.NS, domain, (*Resolver).NS)); p != "" {
+	if p := matchAny(r.records(ctx, known.NS, domain, (*Resolver).NS)); p != "" {
 		return p
 	}
 	// The registrable domain is only worth a second query when it differs.
 	if root := RootDomain(domain); root != domain {
-		ns, _ := r.NS(root)
+		ns, _ := r.NS(ctx, root)
 		if p := matchAny(ns); p != "" {
 			return p
 		}
 	}
-	if p := matchAny(r.records(known.CNAME, domain, (*Resolver).CNAME)); p != "" {
+	if p := matchAny(r.records(ctx, known.CNAME, domain, (*Resolver).CNAME)); p != "" {
 		return p
 	}
 
-	for _, rec := range r.records(known.A, domain, (*Resolver).A) {
+	for _, rec := range r.records(ctx, known.A, domain, (*Resolver).A) {
 		if p := providerForIP(rec.Value); p != "" {
 			return p
 		}
@@ -186,11 +192,11 @@ func (r *Resolver) DetectPlatform(domain string, known *Known) string {
 }
 
 // records returns cached if the caller supplied it, otherwise runs the lookup.
-func (r *Resolver) records(cached []Record, domain string, lookup func(*Resolver, string) ([]Record, error)) []Record {
+func (r *Resolver) records(ctx context.Context, cached []Record, domain string, lookup Lookup) []Record {
 	if cached != nil {
 		return cached
 	}
-	out, _ := lookup(r, domain)
+	out, _ := lookup(r, ctx, domain)
 	return out
 }
 

@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -157,6 +159,17 @@ func downloadVerified(ctx context.Context, url, dstDir, wantSum string) (string,
 	return tmpName, nil
 }
 
+// isPermissionDenied reports whether err was ultimately a permission failure.
+//
+// It uses errors.Is rather than os.IsPermission, which predates error wrapping
+// and only unwraps the os error types themselves. Staging failures are returned
+// wrapped in context ("cannot stage update in %s: %w"), so os.IsPermission
+// answered false for them and the one case that always needs the hint — an
+// unprivileged update into /usr/local/bin — was the case that never printed it.
+func isPermissionDenied(err error) bool {
+	return errors.Is(err, fs.ErrPermission)
+}
+
 // currentBinaryPath resolves the running executable, following symlinks so the
 // update replaces the real file rather than the link pointing at it.
 func currentBinaryPath() (string, error) {
@@ -214,7 +227,7 @@ var updateCmd = &cobra.Command{
 		url := fmt.Sprintf("%s/v%s/%s", repoDownload, latest, assetName)
 		tmpName, err := downloadVerified(ctx, url, filepath.Dir(execPath), wantSum)
 		if err != nil {
-			if os.IsPermission(err) {
+			if isPermissionDenied(err) {
 				return fmt.Errorf("permission denied — try: sudo sek update")
 			}
 			return err
@@ -226,7 +239,7 @@ var updateCmd = &cobra.Command{
 		// leave it truncated and unrunnable if the copy died halfway through.
 		if err := os.Rename(tmpName, execPath); err != nil {
 			os.Remove(tmpName)
-			if os.IsPermission(err) {
+			if isPermissionDenied(err) {
 				return fmt.Errorf("permission denied — try: sudo sek update")
 			}
 			return fmt.Errorf("could not replace %s: %w", execPath, err)

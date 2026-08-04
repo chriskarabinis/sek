@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -18,20 +20,25 @@ var (
 	dnsReverse string
 )
 
-// dnsLookups maps a -t value to its section title and lookup.
+// dnsLookups maps a -t value to its section title and lookup. Aliases are the
+// other spellings that select the same section: the A lookup answers for both
+// families, and -t AAAA is what someone after the v6 addresses will reach for —
+// it was rejected as an unknown record type even though the command's own help
+// listed it as supported.
 var dnsLookups = []struct {
-	key    string
-	title  string
-	lookup func(*dnsx.Resolver, string) ([]dnsx.Record, error)
+	key     string
+	aliases []string
+	title   string
+	lookup  dnsx.Lookup
 }{
-	{"A", "A / AAAA", (*dnsx.Resolver).A},
-	{"MX", "MX", (*dnsx.Resolver).MX},
-	{"NS", "NS", (*dnsx.Resolver).NS},
-	{"TXT", "TXT", (*dnsx.Resolver).TXT},
-	{"CNAME", "CNAME", (*dnsx.Resolver).CNAME},
-	{"SOA", "SOA", (*dnsx.Resolver).SOA},
-	{"CAA", "CAA", (*dnsx.Resolver).CAA},
-	{"EMAIL", "Email Security (SPF / DMARC / DKIM)", (*dnsx.Resolver).EmailSecurity},
+	{key: "A", aliases: []string{"AAAA"}, title: "A / AAAA", lookup: (*dnsx.Resolver).A},
+	{key: "MX", title: "MX", lookup: (*dnsx.Resolver).MX},
+	{key: "NS", title: "NS", lookup: (*dnsx.Resolver).NS},
+	{key: "TXT", title: "TXT", lookup: (*dnsx.Resolver).TXT},
+	{key: "CNAME", title: "CNAME", lookup: (*dnsx.Resolver).CNAME},
+	{key: "SOA", title: "SOA", lookup: (*dnsx.Resolver).SOA},
+	{key: "CAA", title: "CAA", lookup: (*dnsx.Resolver).CAA},
+	{key: "EMAIL", title: "Email Security (SPF / DMARC / DKIM)", lookup: (*dnsx.Resolver).EmailSecurity},
 }
 
 var dnsCmd = &cobra.Command{
@@ -45,10 +52,13 @@ var dnsCmd = &cobra.Command{
 		}
 		defer w.Close()
 
+		ctx, stop := commandContext()
+		defer stop()
+
 		resolver := dnsx.NewResolver(dnsServer)
 
 		if dnsReverse != "" {
-			return runReverseDNS(w, dnsReverse)
+			return runReverseDNS(ctx, w, resolver, dnsReverse)
 		}
 		if dnsDomain == "" {
 			return fmt.Errorf("domain is required, use -d <domain>")
@@ -58,12 +68,7 @@ var dnsCmd = &cobra.Command{
 		wanted := strings.ToUpper(strings.TrimSpace(dnsType))
 		all := wanted == ""
 
-		selected := make([]int, 0, len(dnsLookups))
-		for i, l := range dnsLookups {
-			if all || l.key == wanted {
-				selected = append(selected, i)
-			}
-		}
+		selected := selectLookups(wanted)
 		if len(selected) == 0 {
 			return fmt.Errorf("unknown record type %q", dnsType)
 		}
@@ -81,7 +86,7 @@ var dnsCmd = &cobra.Command{
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				outcomes[n].records, outcomes[n].err = dnsLookups[i].lookup(resolver, dnsDomain)
+				outcomes[n].records, outcomes[n].err = dnsLookups[i].lookup(resolver, ctx, dnsDomain)
 			}()
 		}
 		wg.Wait()
@@ -112,10 +117,10 @@ var dnsCmd = &cobra.Command{
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				res.Wildcard = resolver.Wildcard(dnsDomain)
+				res.Wildcard = resolver.Wildcard(ctx, dnsDomain)
 			}()
 		}
-		res.Platform = resolver.DetectPlatform(dnsDomain, &dnsx.Known{
+		res.Platform = resolver.DetectPlatform(ctx, dnsDomain, &dnsx.Known{
 			NS:    fetched["NS"],
 			CNAME: fetched["CNAME"],
 			A:     fetched["A"],
@@ -130,13 +135,34 @@ var dnsCmd = &cobra.Command{
 	},
 }
 
-func runReverseDNS(w *output.Writer, ip string) error {
-	records, err := dnsx.Reverse(ip)
-	if err != nil && len(records) == 0 {
+// selectLookups returns the indices into dnsLookups that a normalised -t value
+// asks for. An empty value selects every section.
+func selectLookups(wanted string) []int {
+	selected := make([]int, 0, len(dnsLookups))
+	for i, l := range dnsLookups {
+		if wanted == "" || l.key == wanted || slices.Contains(l.aliases, wanted) {
+			selected = append(selected, i)
+		}
+	}
+	return selected
+}
+
+func runReverseDNS(ctx context.Context, w *output.Writer, resolver *dnsx.Resolver, ip string) error {
+	records, err := resolver.Reverse(ctx, ip)
+	// An address with no PTR answers NOERROR and no records, which is not an
+	// error but is equally nothing to show. Keying the empty case off err alone
+	// let that answer through to the success branch and printed a PTR heading
+	// with nothing under it.
+	if len(records) == 0 {
 		if w.IsJSON() {
+			section := dnsx.Section{Title: "PTR"}
+			if err != nil {
+				section.Error = err.Error()
+			}
 			return w.JSON(&dnsx.Result{
 				Domain:   ip,
-				Sections: []dnsx.Section{{Title: "PTR", Error: err.Error()}},
+				Server:   resolver.Server,
+				Sections: []dnsx.Section{section},
 			})
 		}
 		w.Header("Reverse DNS for: %s", ip)
@@ -145,7 +171,11 @@ func runReverseDNS(w *output.Writer, ip string) error {
 		return nil
 	}
 
-	res := &dnsx.Result{Domain: ip, Sections: []dnsx.Section{{Title: "PTR", Records: records}}}
+	res := &dnsx.Result{
+		Domain:   ip,
+		Server:   resolver.Server,
+		Sections: []dnsx.Section{{Title: "PTR", Records: records}},
+	}
 	if w.IsJSON() {
 		return w.JSON(res)
 	}
@@ -202,7 +232,7 @@ func renderRecords(w *output.Writer, records []dnsx.Record) {
 
 func init() {
 	dnsCmd.Flags().StringVarP(&dnsDomain, "domain", "d", "", "Target domain (e.g. example.com)")
-	dnsCmd.Flags().StringVarP(&dnsType, "type", "t", "", "Record type: A, MX, NS, TXT, CNAME, SOA, CAA, EMAIL (default: all)")
+	dnsCmd.Flags().StringVarP(&dnsType, "type", "t", "", "Record type: A, AAAA, MX, NS, TXT, CNAME, SOA, CAA, EMAIL (default: all)")
 	dnsCmd.Flags().StringVarP(&dnsServer, "server", "s", "", "DNS server to use (e.g. 8.8.8.8)")
 	dnsCmd.Flags().StringVarP(&dnsReverse, "reverse", "r", "", "Reverse DNS lookup for an IP address")
 	rootCmd.AddCommand(dnsCmd)

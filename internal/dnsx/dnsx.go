@@ -3,6 +3,7 @@
 package dnsx
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -69,32 +70,59 @@ func serverAddress(custom string) string {
 	}
 
 	if config, err := dns.ClientConfigFromFile("/etc/resolv.conf"); err == nil {
-		for _, srv := range config.Servers {
-			// IPv6 link-local entries carry a zone that miekg/dns will not dial.
-			if strings.HasPrefix(srv, "fe80") {
-				continue
-			}
-			return net.JoinHostPort(srv, config.Port)
+		if srv := pickServer(config.Servers, config.Port); srv != "" {
+			return srv
 		}
 	}
 	return "8.8.8.8:53"
 }
 
+// pickServer returns the first dialable nameserver from a resolv.conf list, or
+// "" when none of them are.
+//
+// Two entries have to be skipped rather than handed to the dialer. IPv6
+// link-local addresses carry a zone that miekg/dns will not dial, and the
+// prefix test for them is case-insensitive because resolv.conf is written by
+// whatever populates it — "FE80::1%eth0" is as valid a spelling as the
+// lower-case one this used to look for. Anything that is not an address at all
+// cannot be dialled either, and returning it unchecked meant one unusable first
+// entry failed every query instead of falling through to the public resolver.
+func pickServer(servers []string, port string) string {
+	if port == "" {
+		port = "53"
+	}
+	for _, srv := range servers {
+		if strings.HasPrefix(strings.ToLower(srv), "fe80") {
+			continue
+		}
+		if net.ParseIP(srv) == nil {
+			continue
+		}
+		return net.JoinHostPort(srv, port)
+	}
+	return ""
+}
+
 // query sends one question, retrying over TCP when the UDP answer is truncated.
-func (r *Resolver) query(domain string, qtype uint16) ([]dns.RR, error) {
+//
+// It goes through ExchangeContext rather than Exchange so the caller's context
+// applies. Without one, `sek dns` was the only command a Ctrl+C could not
+// reach: it sat out the full five-second timeout on every outstanding query,
+// and with -o that left the output file half written.
+func (r *Resolver) query(ctx context.Context, domain string, qtype uint16) ([]dns.RR, error) {
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(domain), qtype)
 	m.RecursionDesired = true
 
 	c := &dns.Client{Timeout: r.Timeout}
-	resp, _, err := c.Exchange(m, r.Server)
+	resp, _, err := c.ExchangeContext(ctx, m, r.Server)
 	if err != nil {
 		return nil, err
 	}
 
 	if resp.Truncated {
 		c.Net = "tcp"
-		resp, _, err = c.Exchange(m, r.Server)
+		resp, _, err = c.ExchangeContext(ctx, m, r.Server)
 		if err != nil {
 			return nil, err
 		}
@@ -108,8 +136,8 @@ func (r *Resolver) query(domain string, qtype uint16) ([]dns.RR, error) {
 
 // lookup runs a query and maps each answer through fn, which reports false for
 // record types it does not handle.
-func (r *Resolver) lookup(domain string, qtype uint16, fn func(dns.RR) (Record, bool)) ([]Record, error) {
-	rrs, err := r.query(domain, qtype)
+func (r *Resolver) lookup(ctx context.Context, domain string, qtype uint16, fn func(dns.RR) (Record, bool)) ([]Record, error) {
+	rrs, err := r.query(ctx, domain, qtype)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +152,7 @@ func (r *Resolver) lookup(domain string, qtype uint16, fn func(dns.RR) (Record, 
 
 // A returns A and AAAA records together. The two queries are independent, so
 // they go out at once rather than costing a round-trip each.
-func (r *Resolver) A(domain string) ([]Record, error) {
+func (r *Resolver) A(ctx context.Context, domain string) ([]Record, error) {
 	var (
 		v4, v6        []Record
 		errA, errAAAA error
@@ -134,7 +162,7 @@ func (r *Resolver) A(domain string) ([]Record, error) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		v4, errA = r.lookup(domain, dns.TypeA, func(rr dns.RR) (Record, bool) {
+		v4, errA = r.lookup(ctx, domain, dns.TypeA, func(rr dns.RR) (Record, bool) {
 			a, ok := rr.(*dns.A)
 			if !ok {
 				return Record{}, false
@@ -144,7 +172,7 @@ func (r *Resolver) A(domain string) ([]Record, error) {
 	}()
 	go func() {
 		defer wg.Done()
-		v6, errAAAA = r.lookup(domain, dns.TypeAAAA, func(rr dns.RR) (Record, bool) {
+		v6, errAAAA = r.lookup(ctx, domain, dns.TypeAAAA, func(rr dns.RR) (Record, bool) {
 			aaaa, ok := rr.(*dns.AAAA)
 			if !ok {
 				return Record{}, false
@@ -169,8 +197,8 @@ func (r *Resolver) A(domain string) ([]Record, error) {
 }
 
 // MX returns mail exchanger records.
-func (r *Resolver) MX(domain string) ([]Record, error) {
-	return r.lookup(domain, dns.TypeMX, func(rr dns.RR) (Record, bool) {
+func (r *Resolver) MX(ctx context.Context, domain string) ([]Record, error) {
+	return r.lookup(ctx, domain, dns.TypeMX, func(rr dns.RR) (Record, bool) {
 		mx, ok := rr.(*dns.MX)
 		if !ok {
 			return Record{}, false
@@ -181,8 +209,8 @@ func (r *Resolver) MX(domain string) ([]Record, error) {
 }
 
 // NS returns nameserver records.
-func (r *Resolver) NS(domain string) ([]Record, error) {
-	return r.lookup(domain, dns.TypeNS, func(rr dns.RR) (Record, bool) {
+func (r *Resolver) NS(ctx context.Context, domain string) ([]Record, error) {
+	return r.lookup(ctx, domain, dns.TypeNS, func(rr dns.RR) (Record, bool) {
 		ns, ok := rr.(*dns.NS)
 		if !ok {
 			return Record{}, false
@@ -192,8 +220,8 @@ func (r *Resolver) NS(domain string) ([]Record, error) {
 }
 
 // TXT returns text records.
-func (r *Resolver) TXT(domain string) ([]Record, error) {
-	return r.lookup(domain, dns.TypeTXT, func(rr dns.RR) (Record, bool) {
+func (r *Resolver) TXT(ctx context.Context, domain string) ([]Record, error) {
+	return r.lookup(ctx, domain, dns.TypeTXT, func(rr dns.RR) (Record, bool) {
 		txt, ok := rr.(*dns.TXT)
 		if !ok {
 			return Record{}, false
@@ -203,8 +231,8 @@ func (r *Resolver) TXT(domain string) ([]Record, error) {
 }
 
 // CNAME returns canonical name records.
-func (r *Resolver) CNAME(domain string) ([]Record, error) {
-	return r.lookup(domain, dns.TypeCNAME, func(rr dns.RR) (Record, bool) {
+func (r *Resolver) CNAME(ctx context.Context, domain string) ([]Record, error) {
+	return r.lookup(ctx, domain, dns.TypeCNAME, func(rr dns.RR) (Record, bool) {
 		cname, ok := rr.(*dns.CNAME)
 		if !ok {
 			return Record{}, false
@@ -214,8 +242,8 @@ func (r *Resolver) CNAME(domain string) ([]Record, error) {
 }
 
 // SOA returns the start-of-authority record.
-func (r *Resolver) SOA(domain string) ([]Record, error) {
-	return r.lookup(domain, dns.TypeSOA, func(rr dns.RR) (Record, bool) {
+func (r *Resolver) SOA(ctx context.Context, domain string) ([]Record, error) {
+	return r.lookup(ctx, domain, dns.TypeSOA, func(rr dns.RR) (Record, bool) {
 		soa, ok := rr.(*dns.SOA)
 		if !ok {
 			return Record{}, false
@@ -227,8 +255,8 @@ func (r *Resolver) SOA(domain string) ([]Record, error) {
 }
 
 // CAA returns certificate authority authorisation records.
-func (r *Resolver) CAA(domain string) ([]Record, error) {
-	return r.lookup(domain, dns.TypeCAA, func(rr dns.RR) (Record, bool) {
+func (r *Resolver) CAA(ctx context.Context, domain string) ([]Record, error) {
+	return r.lookup(ctx, domain, dns.TypeCAA, func(rr dns.RR) (Record, bool) {
 		caa, ok := rr.(*dns.CAA)
 		if !ok {
 			return Record{}, false
@@ -253,7 +281,7 @@ var dkimSelectors = []string{
 // far the slowest section of `sek dns` — ten of them are guesses at DKIM
 // selectors that usually do not exist, so the command spent most of its time
 // waiting out negative answers in series.
-func (r *Resolver) EmailSecurity(domain string) ([]Record, error) {
+func (r *Resolver) EmailSecurity(ctx context.Context, domain string) ([]Record, error) {
 	names := make([]string, 0, len(dkimSelectors)+2)
 	names = append(names, domain, "_dmarc."+domain)
 	for _, sel := range dkimSelectors {
@@ -266,7 +294,7 @@ func (r *Resolver) EmailSecurity(domain string) ([]Record, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			answers[i], _ = r.TXT(name)
+			answers[i], _ = r.TXT(ctx, name)
 		}()
 	}
 	wg.Wait()
@@ -296,25 +324,32 @@ func (r *Resolver) EmailSecurity(domain string) ([]Record, error) {
 }
 
 // Reverse resolves an IP address to its PTR names.
-func Reverse(ip string) ([]Record, error) {
+//
+// It asks the resolver's own server. Going through net.LookupAddr always used
+// the system resolver, so `sek dns -r <ip> -s <server>` silently ignored the
+// server it was told to use and answered from a different one than every other
+// lookup the tool makes.
+func (r *Resolver) Reverse(ctx context.Context, ip string) ([]Record, error) {
 	if net.ParseIP(ip) == nil {
 		return nil, fmt.Errorf("not an IP address: %s", ip)
 	}
-	names, err := net.LookupAddr(ip)
+	arpa, err := dns.ReverseAddr(ip)
 	if err != nil {
 		return nil, err
 	}
-	var records []Record
-	for _, n := range names {
-		records = append(records, Record{Type: "PTR", Value: trimDot(n)})
-	}
-	return records, nil
+	return r.lookup(ctx, arpa, dns.TypePTR, func(rr dns.RR) (Record, bool) {
+		ptr, ok := rr.(*dns.PTR)
+		if !ok {
+			return Record{}, false
+		}
+		return Record{"PTR", trimDot(ptr.Ptr), ptr.Hdr.Ttl}, true
+	})
 }
 
 // Wildcard returns the address a random subdomain resolves to, or "" when the
 // domain has no wildcard record. NXDOMAIN is the expected negative answer.
-func (r *Resolver) Wildcard(domain string) string {
-	rrs, err := r.query(RandomLabel()+"."+domain, dns.TypeA)
+func (r *Resolver) Wildcard(ctx context.Context, domain string) string {
+	rrs, err := r.query(ctx, RandomLabel()+"."+domain, dns.TypeA)
 	if err != nil {
 		return ""
 	}
