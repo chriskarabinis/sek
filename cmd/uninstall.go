@@ -42,7 +42,7 @@ var uninstallCmd = &cobra.Command{
 		}
 
 		if err := os.Remove(execPath); err != nil {
-			if os.IsPermission(err) {
+			if isPermissionDenied(err) {
 				return fmt.Errorf("permission denied — try: sudo sek uninstall")
 			}
 			return err

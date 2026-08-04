@@ -1,6 +1,12 @@
 package cmd
 
-import "testing"
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"syscall"
+	"testing"
+)
 
 func TestIsNewer(t *testing.T) {
 	tests := []struct {
@@ -97,6 +103,37 @@ func TestTruncate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := truncate(tt.in, tt.max); got != tt.want {
 				t.Errorf("truncate(%q, %d) = %q, want %q", tt.in, tt.max, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestIsPermissionDeniedSeesThroughWrapping is the regression test for the
+// "try: sudo sek update" hint never appearing. downloadVerified returns its
+// staging failure wrapped for context, and os.IsPermission — which predates
+// error wrapping — reported false for it, so the one failure that always needs
+// the hint was the one that never printed it.
+func TestIsPermissionDeniedSeesThroughWrapping(t *testing.T) {
+	denied := &fs.PathError{Op: "open", Path: "/usr/local/bin/.sek-update-1", Err: syscall.EACCES}
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"bare path error", denied, true},
+		{"wrapped once", fmt.Errorf("cannot stage update in %s: %w", "/usr/local/bin", denied), true},
+		{"wrapped twice", fmt.Errorf("update failed: %w",
+			fmt.Errorf("cannot stage update in %s: %w", "/usr/local/bin", denied)), true},
+		{"unrelated", errors.New("checksum mismatch"), false},
+		{"wrapped unrelated", fmt.Errorf("download failed: %w", fs.ErrNotExist), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isPermissionDenied(tt.err); got != tt.want {
+				t.Errorf("isPermissionDenied(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
 	}
