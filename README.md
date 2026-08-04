@@ -263,9 +263,11 @@ sek dns -r <ip>
 | Flag | Long | Description |
 |------|------|-------------|
 | `-d` | `--domain` | Target domain (required unless `-r` is used) |
-| `-t` | `--type` | Record type: `A`, `MX`, `NS`, `TXT`, `CNAME`, `SOA`, `CAA`, `EMAIL` (default: all) |
+| `-t` | `--type` | Record type: `A`, `AAAA`, `MX`, `NS`, `TXT`, `CNAME`, `SOA`, `CAA`, `EMAIL` (default: all) |
 | `-s` | `--server` | Upstream DNS server (e.g. `8.8.8.8`), also used by `-r` |
 | `-r` | `--reverse` | Reverse lookup for an IP address |
+
+`A` and `AAAA` select the same section, which reports both address families.
 
 ```bash
 sek dns -d example.com
