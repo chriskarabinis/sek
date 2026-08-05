@@ -134,16 +134,35 @@ func isWildcardHit(ips, wildcard []string) bool {
 // certLogLimit caps how much of a crt.sh answer is decoded.
 const certLogLimit = 64 << 20
 
+// certLogBase is the crt.sh query endpoint. A var rather than a const so tests
+// can point it at a local server.
+var certLogBase = "https://crt.sh/"
+
 type crtEntry struct {
 	NameValue string `json:"name_value"`
 }
 
+// NormaliseDomain folds a target to the form DNS treats as equivalent and
+// certificate logs answer in: lower case, no surrounding space, no trailing
+// dot. Callers normalise once so names from every source compare and
+// deduplicate against each other.
+func NormaliseDomain(domain string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
+}
+
 // FetchCertLog queries crt.sh for names seen in published certificates.
 func FetchCertLog(ctx context.Context, domain string) ([]string, error) {
+	// Normalised up front because the suffix test below runs against
+	// lower-cased answers. Built from the raw value, "-d Example.com" produced
+	// the suffix ".Example.com", which matches nothing crt.sh returns — the
+	// whole certificate-transparency source came back empty for any target not
+	// typed in lower case, with no error to say so.
+	domain = NormaliseDomain(domain)
+
 	// The leading % is crt.sh's SQL LIKE wildcard and is deliberately sent
 	// unescaped, which is what the service expects. Go passes RawQuery through
 	// untouched, so it reaches crt.sh verbatim.
-	url := fmt.Sprintf("https://crt.sh/?q=%%.%s&output=json", domain)
+	url := fmt.Sprintf("%s?q=%%.%s&output=json", certLogBase, domain)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

@@ -37,6 +37,12 @@ var subCmd = &cobra.Command{
 		ctx, stop := commandContext()
 		defer stop()
 
+		// Normalised once, so the two sources agree on how a host is spelled.
+		// crt.sh answers in lower case and brute force builds its names from
+		// the flag as typed, so "-d Example.com" had them landing in the seen
+		// set under different keys and reported twice.
+		subDomain = subx.NormaliseDomain(subDomain)
+
 		res := &subx.Result{Domain: subDomain, IPs: subx.LookupIPs(ctx, subDomain)}
 
 		w.Header("%s  ->  %s", subDomain, joinOr(res.IPs, "N/A"))
