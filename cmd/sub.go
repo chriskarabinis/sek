@@ -102,6 +102,14 @@ var subCmd = &cobra.Command{
 		}
 		res.WildcardFiltered = filtered()
 
+		// Findings already streamed to the terminal stand, but an interrupted
+		// run has not enumerated anything: closing with "Done. Found N unique
+		// subdomains total." and exit 0 claims a completed sweep, and in JSON
+		// mode it emits a document indistinguishable from a full one.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		sort.Slice(res.Findings, func(i, j int) bool { return res.Findings[i].Host < res.Findings[j].Host })
 
 		if w.IsJSON() {

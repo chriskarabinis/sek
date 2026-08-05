@@ -64,8 +64,8 @@ func newWriter() (*output.Writer, error) {
 
 // commandContext returns a context cancelled on interrupt, so a long scan stops
 // on Ctrl+C instead of being killed mid-render with the output file half
-// written.
-func commandContext() (context.Context, context.CancelFunc) {
+// written. It is a var so tests can hand a command a context they control.
+var commandContext = func() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 

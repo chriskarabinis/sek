@@ -91,6 +91,15 @@ var dnsCmd = &cobra.Command{
 		}
 		wg.Wait()
 
+		// An interrupt leaves every lookup carrying "context canceled" as its
+		// error. Rendering those as a finished report — sections, wildcard
+		// verdict, platform line, exit status 0, and with -o a file that looks
+		// complete — presents a run that answered nothing as one that answered
+		// everything. `scan` already returns the context error at this point.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		// Records are kept as they come back so platform detection can reuse
 		// them instead of asking the resolver the same questions again.
 		fetched := make(map[string][]dnsx.Record, len(selected))
