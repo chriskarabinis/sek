@@ -92,14 +92,35 @@ func TLD(domain string) string {
 	return suffix
 }
 
-// Query sends a request to a WHOIS server and returns the raw response.
+// Query sends a request to a WHOIS server on port 43 and returns the raw
+// response.
 func Query(ctx context.Context, query, server string) (string, error) {
+	return queryAddr(ctx, query, net.JoinHostPort(server, "43"))
+}
+
+// queryAddr is Query against an already-assembled address, so the transport can
+// be exercised against a local listener.
+func queryAddr(ctx context.Context, query, address string) (string, error) {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(server, "43"))
+	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return "", err
 	}
 	defer conn.Close()
+
+	// DialContext honours ctx only while connecting. Once the request is sent
+	// the response read is bounded by the deadline alone, so a Ctrl+C during a
+	// slow registry answer did nothing for up to twenty seconds. Closing the
+	// connection is what unblocks the read.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			conn.Close()
+		case <-done:
+		}
+	}()
 
 	if deadline, ok := ctx.Deadline(); ok {
 		conn.SetDeadline(deadline)
@@ -117,6 +138,13 @@ func Query(ctx context.Context, query, server string) (string, error) {
 	for scanner.Scan() {
 		out.WriteString(scanner.Text())
 		out.WriteString("\n")
+	}
+
+	// A cancelled read surfaces as "use of closed network connection", which
+	// describes the mechanism rather than the cause — and often as no error at
+	// all, since a closed connection reads as a clean EOF. Report the context.
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	return out.String(), scanner.Err()
 }
