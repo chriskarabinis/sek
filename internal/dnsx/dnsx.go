@@ -62,7 +62,14 @@ func NewResolver(server string) *Resolver {
 
 // serverAddress normalises a user-supplied server, or discovers one.
 func serverAddress(custom string) string {
-	if custom != "" {
+	if custom = strings.TrimSpace(custom); custom != "" {
+		// An address with no port is handled before SplitHostPort because a
+		// bracketed IPv6 literal ("[::1]") fails it for the same reason a bare
+		// one does — no port — and JoinHostPort would then bracket the brackets
+		// and produce "[[::1]]:53", which never dials.
+		if bare := strings.Trim(custom, "[]"); net.ParseIP(bare) != nil {
+			return net.JoinHostPort(bare, "53")
+		}
 		if _, _, err := net.SplitHostPort(custom); err != nil {
 			return net.JoinHostPort(custom, "53")
 		}
