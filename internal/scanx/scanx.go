@@ -201,12 +201,12 @@ func probe(ctx context.Context, host string, port int, timeout time.Duration) Po
 	dialer := &net.Dialer{Timeout: timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err == nil {
-		conn.Close()
+		defer conn.Close()
 		return Port{
 			Port:    port,
 			State:   StateOpen,
 			Service: ServiceName(port),
-			Version: grabVersion(ctx, host, port, timeout),
+			Version: grabVersion(ctx, conn, host, port, timeout),
 		}
 	}
 
@@ -220,34 +220,30 @@ func probe(ctx context.Context, host string, port int, timeout time.Duration) Po
 }
 
 // grabVersion asks an open port to identify itself: an HTTP request for web
-// ports, otherwise whatever banner the service volunteers on connect.
-func grabVersion(ctx context.Context, host string, port int, timeout time.Duration) string {
-	address := hostPort(host, port)
-
+// ports, a TLS handshake on top of the socket for TLS ones, otherwise whatever
+// banner the service volunteers on connect.
+//
+// It speaks over the connection the probe already opened rather than dialling
+// again. Every open port used to cost two handshakes; besides the wasted
+// round-trip, the banner could come from a different backend than the one
+// probed, and on a wide scan the doubled connection count is exactly what
+// trips connection rate limiting.
+func grabVersion(ctx context.Context, conn net.Conn, host string, port int, timeout time.Duration) string {
 	if tlsPorts[port] {
 		// SNI must be a hostname; sending an IP literal is invalid.
 		serverName := host
 		if net.ParseIP(host) != nil {
 			serverName = ""
 		}
-		dialer := &tls.Dialer{
-			NetDialer: &net.Dialer{Timeout: timeout},
-			Config:    &tls.Config{InsecureSkipVerify: true, ServerName: serverName},
-		}
-		conn, err := dialer.DialContext(ctx, "tcp", address)
-		if err != nil {
+		// tls.Client wraps the open socket: nothing has been written to it yet,
+		// so it is still at the start of the record stream.
+		tlsConn := tls.Client(conn, &tls.Config{InsecureSkipVerify: true, ServerName: serverName})
+		conn.SetDeadline(time.Now().Add(timeout))
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			return ""
 		}
-		defer conn.Close()
-		return httpServerHeader(conn, host, timeout)
+		return httpServerHeader(tlsConn, host, timeout)
 	}
-
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", address)
-	if err != nil {
-		return ""
-	}
-	defer conn.Close()
 
 	if httpPorts[port] {
 		return httpServerHeader(conn, host, timeout)
@@ -271,8 +267,22 @@ func grabVersion(ctx context.Context, host string, port int, timeout time.Durati
 // Server header. The header block of any sane server fits several times over.
 const headerLimit = 8 << 10
 
-// headerEnd terminates an HTTP header block.
-var headerEnd = []byte("\r\n\r\n")
+// headerEnds terminate an HTTP header block. Embedded and hand-rolled servers
+// separate lines with a bare LF, and waiting for a CRLF pair that never comes
+// cost the full timeout on every such port — the very case the read loop stops
+// early to avoid. "\r\n\r\n" contains no two consecutive newlines, so testing
+// for the LF form as well cannot fire early on a well-formed block.
+var headerEnds = [][]byte{[]byte("\r\n\r\n"), []byte("\n\n")}
+
+// endOfHeaders reports whether raw contains a complete header block.
+func endOfHeaders(raw []byte) bool {
+	for _, end := range headerEnds {
+		if bytes.Contains(raw, end) {
+			return true
+		}
+	}
+	return false
+}
 
 func httpServerHeader(conn net.Conn, host string, timeout time.Duration) string {
 	conn.SetDeadline(time.Now().Add(timeout))
@@ -291,7 +301,7 @@ func httpServerHeader(conn net.Conn, host string, timeout time.Duration) string 
 	for len(raw) < headerLimit {
 		n, err := conn.Read(buf)
 		raw = append(raw, buf[:n]...)
-		if err != nil || bytes.Contains(raw, headerEnd) {
+		if err != nil || endOfHeaders(raw) {
 			break
 		}
 	}
