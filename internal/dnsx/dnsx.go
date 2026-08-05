@@ -63,17 +63,7 @@ func NewResolver(server string) *Resolver {
 // serverAddress normalises a user-supplied server, or discovers one.
 func serverAddress(custom string) string {
 	if custom = strings.TrimSpace(custom); custom != "" {
-		// An address with no port is handled before SplitHostPort because a
-		// bracketed IPv6 literal ("[::1]") fails it for the same reason a bare
-		// one does — no port — and JoinHostPort would then bracket the brackets
-		// and produce "[[::1]]:53", which never dials.
-		if bare := strings.Trim(custom, "[]"); net.ParseIP(bare) != nil {
-			return net.JoinHostPort(bare, "53")
-		}
-		if _, _, err := net.SplitHostPort(custom); err != nil {
-			return net.JoinHostPort(custom, "53")
-		}
-		return custom
+		return withDefaultPort(custom)
 	}
 
 	if config, err := dns.ClientConfigFromFile("/etc/resolv.conf"); err == nil {
@@ -82,6 +72,26 @@ func serverAddress(custom string) string {
 		}
 	}
 	return "8.8.8.8:53"
+}
+
+// withDefaultPort appends the DNS port to a server that carries none.
+//
+// SplitHostPort is the authority on whether one is already there: it
+// understands the bracketed form and the zone inside it, which net.ParseIP does
+// not — ParseIP rejects "fe80::1%eth0" outright.
+//
+// A value with no port that is already bracketed only needs ":53" appended. It
+// is in the form JoinHostPort produces, so handing it back to JoinHostPort
+// brackets the brackets: "[::1]" became "[[::1]]:53", which fails every query
+// it is given.
+func withDefaultPort(server string) string {
+	if _, _, err := net.SplitHostPort(server); err == nil {
+		return server
+	}
+	if strings.HasPrefix(server, "[") && strings.HasSuffix(server, "]") {
+		return server + ":53"
+	}
+	return net.JoinHostPort(server, "53")
 }
 
 // pickServer returns the first dialable nameserver from a resolv.conf list, or

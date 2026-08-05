@@ -136,6 +136,15 @@ var dnsCmd = &cobra.Command{
 		})
 		wg.Wait()
 
+		// And again for the second phase. Neither the wildcard probe nor
+		// platform detection reports an error — a negative answer is the
+		// expected result for both — so an interrupt arriving here left the
+		// records intact and quietly turned the two verdicts into "no wildcard"
+		// and "Custom / Unknown", which read exactly like real answers.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		if w.IsJSON() {
 			return w.JSON(res)
 		}

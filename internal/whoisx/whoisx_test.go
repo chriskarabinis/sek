@@ -1,6 +1,7 @@
 package whoisx
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -222,23 +223,33 @@ func TestQueryHonoursCancellation(t *testing.T) {
 	// A registry that answers with one line and then goes quiet, holding the
 	// connection open the way a slow port-43 server does.
 	held := make(chan struct{})
+	// Closed once the request has been read and the partial answer written, so
+	// cancellation is known to arrive while the read is blocked. A fixed sleep
+	// could fire during the dial instead, and the unfixed code returns the
+	// context error from there too — the test would pass without ever
+	// exercising the read it exists to cover.
+	answered := make(chan struct{})
 	go func() {
 		conn, err := listener.Accept()
 		if err != nil {
 			return
 		}
 		defer conn.Close()
+		if _, err := bufio.NewReader(conn).ReadString('\n'); err != nil {
+			return
+		}
 		io.WriteString(conn, "Domain Name: EXAMPLE.COM\r\n")
+		close(answered)
 		<-held
 	}()
 	defer close(held)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		<-answered
 		cancel()
 	}()
-	defer cancel()
 
 	start := time.Now()
 	_, err = queryAddr(ctx, "example.com", listener.Addr().String())
