@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -363,5 +365,58 @@ func TestResolveAllStopsMidRun(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("ResolveAll did not return after its context was cancelled")
+	}
+}
+
+func TestNormaliseDomain(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"example.com", "example.com"},
+		{"Example.COM", "example.com"},
+		{"  example.com  ", "example.com"},
+		{"example.com.", "example.com"},
+		{"Example.com.", "example.com"},
+	}
+	for _, tt := range tests {
+		if got := NormaliseDomain(tt.in); got != tt.want {
+			t.Errorf("NormaliseDomain(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestFetchCertLogFoldsCase is the regression test for the suffix filter being
+// built from the raw -d value. Certificate log names are lower-cased before the
+// test, so "-d Example.com" produced ".Example.com" and discarded every answer:
+// the source reported nothing at all, and reported no error either.
+func TestFetchCertLogFoldsCase(t *testing.T) {
+	const body = `[{"name_value":"www.example.com\nshop.example.com"},
+	              {"name_value":"*.example.com"},
+	              {"name_value":"notexample.com"}]`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, body)
+	}))
+	defer srv.Close()
+
+	prev := certLogBase
+	certLogBase = srv.URL + "/"
+	defer func() { certLogBase = prev }()
+
+	for _, target := range []string{"example.com", "Example.com", "EXAMPLE.COM.", " example.com "} {
+		got, err := FetchCertLog(context.Background(), target)
+		if err != nil {
+			t.Fatalf("FetchCertLog(%q) returned error: %v", target, err)
+		}
+		want := []string{"shop.example.com", "www.example.com"}
+		if len(got) != len(want) {
+			t.Fatalf("FetchCertLog(%q) = %v, want %v", target, got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("FetchCertLog(%q)[%d] = %q, want %q", target, i, got[i], want[i])
+			}
+		}
 	}
 }

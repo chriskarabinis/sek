@@ -91,6 +91,19 @@ func TestServerAddress(t *testing.T) {
 		{"bare ipv4 gets default port", "8.8.8.8", "8.8.8.8:53"},
 		{"explicit port kept", "8.8.8.8:5353", "8.8.8.8:5353"},
 		{"bracketed ipv6 with port kept", "[2001:4860:4860::8888]:53", "[2001:4860:4860::8888]:53"},
+		{"bare ipv6 gets brackets and default port", "2001:4860:4860::8888", "[2001:4860:4860::8888]:53"},
+		// Bracketed with no port fails SplitHostPort for the same reason a bare
+		// literal does, and JoinHostPort would bracket the brackets: the result
+		// was "[[::1]]:53", which fails every query it is handed.
+		{"bracketed ipv6 without port", "[::1]", "[::1]:53"},
+		// net.ParseIP rejects a zone identifier, so a scoped literal has to be
+		// recognised by its brackets rather than by parsing it — otherwise it
+		// takes the same doubling path "[::1]" used to.
+		{"bracketed scoped ipv6 without port", "[fe80::1%eth0]", "[fe80::1%eth0]:53"},
+		{"bracketed scoped ipv6 with port kept", "[fe80::1%eth0]:5353", "[fe80::1%eth0]:5353"},
+		{"bare scoped ipv6 gets brackets", "fe80::1%eth0", "[fe80::1%eth0]:53"},
+		{"surrounding space trimmed", "  8.8.8.8  ", "8.8.8.8:53"},
+		{"hostname gets default port", "resolver.example.com", "resolver.example.com:53"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

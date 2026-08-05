@@ -286,3 +286,35 @@ func TestProbesReturnPromptlyWhenCancelled(t *testing.T) {
 		t.Fatal("the probes ignored the cancelled context")
 	}
 }
+
+// TestDetectPlatformSkipsRootQueryForTheSameName covers the second NS lookup,
+// which is meant to run only when the registrable domain differs from the one
+// asked about. RootDomain lower-cases and strips the trailing dot, so comparing
+// against the raw argument made "Example.com" and "example.com." differ from
+// their own root and pay for a duplicate query of a name DNS considers
+// identical.
+func TestDetectPlatformSkipsRootQueryForTheSameName(t *testing.T) {
+	// Every record supplied, so nothing but the root lookup can query.
+	known := &Known{NS: []Record{}, CNAME: []Record{}, A: []Record{}}
+
+	for _, domain := range []string{"example.com", "Example.com", "EXAMPLE.COM", "example.com.", " example.com "} {
+		ts := startTestServer(t, nil, 0)
+		r := &Resolver{Server: ts.addr, Timeout: 2 * time.Second}
+
+		r.DetectPlatform(context.Background(), domain, known)
+
+		if n := ts.queries.Load(); n != 0 {
+			t.Errorf("DetectPlatform(%q) made %d queries with every record supplied, want 0", domain, n)
+		}
+	}
+
+	// The lookup must still happen for a name that really is below its root.
+	ts := startTestServer(t, nil, 0)
+	r := &Resolver{Server: ts.addr, Timeout: 2 * time.Second}
+
+	r.DetectPlatform(context.Background(), "shop.example.com", known)
+
+	if n := ts.queries.Load(); n != 1 {
+		t.Errorf("DetectPlatform(\"shop.example.com\") made %d queries, want 1 for the registrable domain", n)
+	}
+}

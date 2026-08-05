@@ -1,8 +1,14 @@
 package whoisx
 
 import (
+	"bufio"
+	"context"
+	"errors"
+	"io"
+	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTLD(t *testing.T) {
@@ -200,5 +206,57 @@ func TestRegistryKeyResolvesToKnownServer(t *testing.T) {
 		if server := whoisServers[registryKey(tld)]; server != "whois.auda.org.au" {
 			t.Errorf("%s resolved to %q, want whois.auda.org.au", tld, server)
 		}
+	}
+}
+
+// TestQueryHonoursCancellation is the regression test for the response read
+// ignoring the context. DialContext applies only while connecting, so once the
+// request was sent a Ctrl+C during a slow registry answer bought nothing: the
+// read sat out the full twenty-second deadline.
+func TestQueryHonoursCancellation(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("cannot listen: %v", err)
+	}
+	defer listener.Close()
+
+	// A registry that answers with one line and then goes quiet, holding the
+	// connection open the way a slow port-43 server does.
+	held := make(chan struct{})
+	// Closed once the request has been read and the partial answer written, so
+	// cancellation is known to arrive while the read is blocked. A fixed sleep
+	// could fire during the dial instead, and the unfixed code returns the
+	// context error from there too — the test would pass without ever
+	// exercising the read it exists to cover.
+	answered := make(chan struct{})
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, err := bufio.NewReader(conn).ReadString('\n'); err != nil {
+			return
+		}
+		io.WriteString(conn, "Domain Name: EXAMPLE.COM\r\n")
+		close(answered)
+		<-held
+	}()
+	defer close(held)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-answered
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err = queryAddr(ctx, "example.com", listener.Addr().String())
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("Query waited %v after cancellation, want a prompt return", elapsed)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Query returned %v, want context.Canceled", err)
 	}
 }

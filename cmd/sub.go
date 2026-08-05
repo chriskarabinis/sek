@@ -37,6 +37,12 @@ var subCmd = &cobra.Command{
 		ctx, stop := commandContext()
 		defer stop()
 
+		// Normalised once, so the two sources agree on how a host is spelled.
+		// crt.sh answers in lower case and brute force builds its names from
+		// the flag as typed, so "-d Example.com" had them landing in the seen
+		// set under different keys and reported twice.
+		subDomain = subx.NormaliseDomain(subDomain)
+
 		res := &subx.Result{Domain: subDomain, IPs: subx.LookupIPs(ctx, subDomain)}
 
 		w.Header("%s  ->  %s", subDomain, joinOr(res.IPs, "N/A"))
@@ -95,6 +101,14 @@ var subCmd = &cobra.Command{
 			w.Highlight(formatFinding(finding))
 		}
 		res.WildcardFiltered = filtered()
+
+		// Findings already streamed to the terminal stand, but an interrupted
+		// run has not enumerated anything: closing with "Done. Found N unique
+		// subdomains total." and exit 0 claims a completed sweep, and in JSON
+		// mode it emits a document indistinguishable from a full one.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 
 		sort.Slice(res.Findings, func(i, j int) bool { return res.Findings[i].Host < res.Findings[j].Host })
 

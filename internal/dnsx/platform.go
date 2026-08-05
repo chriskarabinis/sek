@@ -173,7 +173,11 @@ func (r *Resolver) DetectPlatform(ctx context.Context, domain string, known *Kno
 		return p
 	}
 	// The registrable domain is only worth a second query when it differs.
-	if root := RootDomain(domain); root != domain {
+	// RootDomain lower-cases and strips the trailing dot, so comparing against
+	// the raw argument made "-d Example.com" or "-d example.com." differ from
+	// their own root and pay for a duplicate NS query — DNS treats all three
+	// spellings as the same name.
+	if root := RootDomain(domain); !strings.EqualFold(root, trimDot(strings.TrimSpace(domain))) {
 		ns, _ := r.NS(ctx, root)
 		if p := matchAny(ns); p != "" {
 			return p

@@ -91,6 +91,15 @@ var dnsCmd = &cobra.Command{
 		}
 		wg.Wait()
 
+		// An interrupt leaves every lookup carrying "context canceled" as its
+		// error. Rendering those as a finished report — sections, wildcard
+		// verdict, platform line, exit status 0, and with -o a file that looks
+		// complete — presents a run that answered nothing as one that answered
+		// everything. `scan` already returns the context error at this point.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		// Records are kept as they come back so platform detection can reuse
 		// them instead of asking the resolver the same questions again.
 		fetched := make(map[string][]dnsx.Record, len(selected))
@@ -126,6 +135,15 @@ var dnsCmd = &cobra.Command{
 			A:     fetched["A"],
 		})
 		wg.Wait()
+
+		// And again for the second phase. Neither the wildcard probe nor
+		// platform detection reports an error — a negative answer is the
+		// expected result for both — so an interrupt arriving here left the
+		// records intact and quietly turned the two verdicts into "no wildcard"
+		// and "Custom / Unknown", which read exactly like real answers.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 
 		if w.IsJSON() {
 			return w.JSON(res)

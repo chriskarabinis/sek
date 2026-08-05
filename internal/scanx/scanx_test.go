@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -356,5 +357,106 @@ func TestDefaultPortsAreUniqueAndSorted(t *testing.T) {
 			t.Errorf("DefaultPorts is out of order at index %d: %d follows %d",
 				i, port, DefaultPorts[i-1])
 		}
+	}
+}
+
+// TestHTTPServerHeaderAcceptsBareLF covers header blocks separated by a bare
+// LF, which embedded and hand-rolled servers send. Waiting for the CRLF pair
+// that never arrives cost the full timeout on every such port — the exact case
+// the read loop stops early to avoid.
+func TestHTTPServerHeaderAcceptsBareLF(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("cannot listen: %v", err)
+	}
+	defer listener.Close()
+
+	held := make(chan struct{})
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		io.WriteString(conn, "HTTP/1.0 200 OK\nServer: lighttpd/1.4.59\n\n")
+		<-held // hold the connection open, as a keep-alive server would
+	}()
+	defer close(held)
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("cannot dial: %v", err)
+	}
+	defer conn.Close()
+
+	start := time.Now()
+	got := httpServerHeader(conn, "127.0.0.1", 5*time.Second)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("httpServerHeader() waited %v for an LF-terminated block, want a prompt return", elapsed)
+	}
+	if got != "lighttpd/1.4.59" {
+		t.Errorf("httpServerHeader() = %q, want %q", got, "lighttpd/1.4.59")
+	}
+}
+
+func TestEndOfHeaders(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{"crlf terminated", "HTTP/1.1 200 OK\r\nServer: x\r\n\r\n", true},
+		{"lf terminated", "HTTP/1.0 200 OK\nServer: x\n\n", true},
+		{"status line only", "HTTP/1.1 200 OK\r\n", false},
+		{"headers still arriving", "HTTP/1.1 200 OK\r\nServer: x\r\n", false},
+		{"a lone crlf is not a terminator", "HTTP/1.0 200 OK\n", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := endOfHeaders([]byte(tt.raw)); got != tt.want {
+				t.Errorf("endOfHeaders(%q) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestProbeOpensOneConnectionPerPort pins the socket handed to the banner grab.
+// Probing used to open a connection, close it to record the port as open, then
+// open a second one to ask the service what it was: two handshakes per open
+// port, a banner that could come from a different backend than the one probed,
+// and twice the connection count on a wide scan.
+func TestProbeOpensOneConnectionPerPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("cannot listen: %v", err)
+	}
+	defer listener.Close()
+
+	var accepts atomic.Int64
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			accepts.Add(1)
+			go func() {
+				defer conn.Close()
+				io.WriteString(conn, "SSH-2.0-OpenSSH_9.6p1\r\n")
+			}()
+		}
+	}()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	got := probe(context.Background(), "127.0.0.1", port, 2*time.Second)
+
+	if got.State != StateOpen {
+		t.Fatalf("probe reported %q, want %q", got.State, StateOpen)
+	}
+	if got.Version != "SSH-2.0-OpenSSH_9.6p1" {
+		t.Errorf("probe read banner %q, want %q", got.Version, "SSH-2.0-OpenSSH_9.6p1")
+	}
+	if n := accepts.Load(); n != 1 {
+		t.Errorf("probe opened %d connections to one port, want 1", n)
 	}
 }
